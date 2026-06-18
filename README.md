@@ -64,12 +64,28 @@
 
 5. 选择 `stock_etf_analysis` 目录
 
-### 方式二：打包安装（正式使用）
+### 方式二：直接下载安装（推荐）
 
-1. 在 `chrome://extensions` 开启开发者模式
-2. 点击 **"打包扩展程序"**
-3. 选择扩展根目录，生成 `.crx` 文件
-4. 拖拽 `.crx` 文件到 Chrome 安装
+1. 下载仓库中的 `stock_etf_analysis.zip`
+
+   ```
+   https://github.com/xinbs/stock_etf_analysis/raw/main/stock_etf_analysis.zip
+   ```
+
+2. 解压到本地目录
+
+3. 打开 Chrome 扩展管理页
+   ```
+   chrome://extensions
+   ```
+
+4. 开启**开发者模式**（右上角开关）
+
+5. 点击 **"加载已解压的扩展程序"**
+
+6. 选择解压后的 `etf-sector-extension` 目录
+
+> 注意：不要选择外层文件夹，要选择包含 `manifest.json` 的目录。
 
 ---
 
