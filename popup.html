@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 420px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      padding: 12px;
+    }
+    h1 {
+      font-size: 16px;
+      color: #58a6ff;
+      text-align: center;
+      margin-bottom: 10px;
+    }
+    .subtitle {
+      font-size: 11px;
+      color: #8b949e;
+      text-align: center;
+      margin-bottom: 10px;
+    }
+    .btn-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    button {
+      flex: 1;
+      padding: 8px 10px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      background: #238636;
+      color: white;
+    }
+    button:hover { background: #2ea043; }
+    button.secondary { background: #1f6feb; }
+    button.secondary:hover { background: #388bfd; }
+    .card {
+      background: #161b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 10px;
+    }
+    .card h2 {
+      font-size: 13px;
+      color: #e6edf3;
+      margin-bottom: 8px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid #30363d;
+    }
+    .row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 6px 0;
+      border-bottom: 1px solid #21262d;
+      font-size: 13px;
+    }
+    .row:last-child { border-bottom: none; }
+    .badge {
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      min-width: 56px;
+      text-align: center;
+    }
+    .badge.up { background: #3d1f1f; color: #ff7b72; }
+    .badge.down { background: #1f3d1f; color: #7ee787; }
+    .badge.flat { background: #30363d; color: #8b949e; }
+    .count { color: #8b949e; font-size: 11px; margin-right: 8px; }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      text-align: center;
+    }
+    .stat .val { font-size: 18px; font-weight: 700; }
+    .stat .lbl { font-size: 11px; color: #8b949e; margin-top: 2px; }
+    .msg { font-size: 12px; color: #8b949e; text-align: center; padding: 10px; }
+    .status-bar {
+      font-size: 11px;
+      color: #8b949e;
+      text-align: center;
+      padding: 6px 0;
+      margin-top: 8px;
+      border-top: 1px solid #21262d;
+    }
+  </style>
+</head>
+<body>
+  <h1>📊 ETF 板块大盘分析器（猪肉群专用）</h1>
+  <div class="subtitle">实时 ETF 板块分析 · 腾讯财经数据源</div>
+
+  <div class="btn-row">
+    <button id="scanBtn">🔍 刷新数据</button>
+    <button class="secondary" id="openBtn">📂 打开全屏</button>
+  </div>
+
+  <div class="card" id="dailyPanel">
+    <h2>🏆 板块当日涨跌 TOP5</h2>
+    <div id="dailyList"><div class="msg">等待数据...</div></div>
+  </div>
+
+  <div class="card" id="ytdPanel">
+    <h2>📈 板块年度涨跌 TOP5</h2>
+    <div id="ytdList"><div class="msg">暂无数据</div></div>
+  </div>
+
+  <div class="card">
+    <h2>📊 大盘统计</h2>
+    <div class="stats" id="statsPanel">
+      <div class="stat"><div class="val" style="color:#ff7b72">--</div><div class="lbl">上涨</div></div>
+      <div class="stat"><div class="val" style="color:#7ee787">--</div><div class="lbl">下跌</div></div>
+      <div class="stat"><div class="val" style="color:#8b949e">--</div><div class="lbl">平盘</div></div>
+    </div>
+  </div>
+
+  <div class="status-bar" id="statusBar">等待扫描数据...</div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
