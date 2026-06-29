@@ -5,6 +5,17 @@ if (typeof echarts === 'undefined') {
   throw new Error('ECharts not loaded');
 }
 
+// ======================== 诊断信息 ========================
+const diag = document.createElement('div');
+diag.id = 'diag';
+diag.style.cssText = 'position:fixed;top:0;left:0;right:0;padding:8px 16px;background:#238636;color:white;z-index:9999;font-size:13px;font-family:monospace;transition:background 0.3s;';
+diag.textContent = '✅ 脚本已加载 | ECharts v' + echarts.version + ' | 初始化中...';
+document.body.insertBefore(diag, document.body.firstChild);
+function setDiag(msg, bg) {
+  diag.textContent = msg;
+  if (bg) diag.style.background = bg;
+}
+
 // ======================== 智能板块分类 ========================
 function classifySector(name) {
   const n = name;
@@ -293,6 +304,7 @@ function loadFromStorage() {
 
 function updateStatus(msg) {
   document.getElementById('statusLine').textContent = msg;
+  setDiag(msg);
 }
 
 // ======================== 分析 ========================
@@ -563,7 +575,9 @@ function renderIndexChart() {
 
 function refreshAll() {
   updateStatus('正在获取实时数据...');
+  setDiag('🔄 正在获取 ETF 和指数数据...', '#1f6feb');
   Promise.all([fetchETFData(), fetchIndexData()]).then(([etfs, indices]) => {
+    setDiag('✅ 数据获取完成，正在渲染...', '#238636');
     if (etfs && etfs.length > 0) {
       data = etfs;
       dataSource = '腾讯财经';
@@ -577,6 +591,7 @@ function refreshAll() {
         renderIndexAll();
       }
       toast('数据已刷新');
+      setDiag(`✅ 数据已刷新 | ${data.length}只ETF ${indices ? indices.length : 0}个指数`, '#238636');
       // 保存到 storage 供 popup 使用
       try {
         chrome.storage?.local?.set({
@@ -589,11 +604,13 @@ function refreshAll() {
     } else {
       updateStatus('获取数据失败');
       toast('获取失败');
+      setDiag('❌ 获取数据失败', '#da3633');
     }
   }).catch(e => {
     console.error(e);
-    updateStatus('刷新失败');
+    updateStatus('刷新失败: ' + e.message);
     toast('刷新失败');
+    setDiag('❌ 刷新失败: ' + e.message, '#da3633');
   });
 }
 
