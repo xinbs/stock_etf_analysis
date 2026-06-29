@@ -310,7 +310,7 @@ function updateStatus(msg) {
 // ======================== 分析 ========================
 function analyze() {
   const m = {};
-  data.forEach(e => { (m[e.sector] ||= []).push(e); });
+  data.forEach(e => { (m[e.sector] = m[e.sector] || []).push(e); });
   return Object.entries(m).map(([s, arr]) => ({
     sector: s, count: arr.length,
     avgDaily: +(arr.reduce((a,b)=>a+b.daily,0)/arr.length).toFixed(2),
@@ -478,7 +478,7 @@ function renderIndexCards() {
   // 按市场分组
   const groups = {};
   indexData.forEach(idx => {
-    (groups[idx.market] ||= []).push(idx);
+    (groups[idx.market] = groups[idx.market] || []).push(idx);
   });
 
   // 市场顺序

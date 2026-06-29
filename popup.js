@@ -133,7 +133,7 @@ let dataSource = '默认';
 
 function analyzeSectors(data) {
   const map = {};
-  data.forEach(e => { (map[e.sector] ||= []).push(e); });
+  data.forEach(e => { (map[e.sector] = map[e.sector] || []).push(e); });
   return Object.entries(map).map(([sector, list]) => ({
     sector, count: list.length,
     avgDaily: +(list.reduce((s, x) => s + x.daily, 0) / list.length).toFixed(2),
