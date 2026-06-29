@@ -60,7 +60,28 @@
     .form-row input { width: 100%; padding: 8px 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 14px; }
     .form-row input:focus { outline: none; border-color: #1f6feb; }
     .form-hint { font-size: 11px; color: #8b949e; margin-top: 4px; }
-    .dialog-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 14px 18px; border-top: 1px solid #30363d; }
+    .index-section { margin-bottom: 16px; }
+    .index-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 10px; }
+    @media (max-width: 1200px) { .index-grid { grid-template-columns: repeat(3, 1fr); } }
+    @media (max-width: 900px) { .index-grid { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 600px) { .index-grid { grid-template-columns: 1fr; } }
+    .index-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px 14px; position: relative; transition: border-color 0.2s; }
+    .index-card:hover { border-color: #1f6feb; }
+    .index-market-label { position: absolute; top: 6px; right: 8px; font-size: 10px; padding: 1px 6px; border-radius: 4px; background: #30363d; color: #8b949e; }
+    .index-name { font-size: 13px; color: #e6edf3; font-weight: 500; margin-bottom: 4px; }
+    .index-price { font-size: 18px; font-weight: 700; color: #e6edf3; margin-bottom: 2px; }
+    .index-change-row { display: flex; align-items: center; gap: 8px; }
+    .index-change { font-size: 12px; font-weight: 600; }
+    .index-change.up { color: #ff7b72; }
+    .index-change.down { color: #7ee787; }
+    .index-change.flat { color: #8b949e; }
+    .index-change-pct { font-size: 11px; padding: 1px 6px; border-radius: 4px; font-weight: 600; }
+    .index-change-pct.up { background: #3d1f1f; color: #ff7b72; }
+    .index-change-pct.down { background: #1f3d1f; color: #7ee787; }
+    .index-change-pct.flat { background: #30363d; color: #8b949e; }
+    .index-divider { height: 1px; background: #21262d; margin: 8px 0; }
+    .index-market-group { margin-bottom: 10px; }
+    .index-market-title { font-size: 12px; color: #58a6ff; font-weight: 600; margin-bottom: 8px; padding-left: 4px; border-left: 3px solid #58a6ff; }
   </style>
 </head>
 <body>
@@ -73,6 +94,11 @@
     <button class="btn2" id="btnRefresh">刷新数据（腾讯财经）</button>
     <button class="btn" id="btnExport">导出 JSON</button>
     <button class="btn" id="btnAddOpen">➕ 添加 ETF</button>
+  </div>
+
+  <div class="card index-section" id="indexSection" style="display:none">
+    <h2>🌍 全球指数监控</h2>
+    <div id="indexCards"></div>
   </div>
 
   <div class="grid">

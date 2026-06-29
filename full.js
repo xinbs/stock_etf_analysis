@@ -63,6 +63,89 @@ const DEFAULT_YTD = {
   'sh512690': -23.32, 'sh516010': -27.57,
 };
 
+// ======================== 全球指数配置 ========================
+const INDEX_CODES = {
+  // A股
+  'sh000001': { name: '上证指数', market: 'A股' },
+  'sz399001': { name: '深证成指', market: 'A股' },
+  'sz399006': { name: '创业板指', market: 'A股' },
+  'sh000688': { name: '科创50',   market: 'A股' },
+  // 港股
+  'hkHSI':    { name: '恒生指数',   market: '港股' },
+  'hkHSTECH': { name: '恒生科技',   market: '港股' },
+  // 美股
+  'usDJI':    { name: '道琼斯',     market: '美股' },
+  'usIXIC':   { name: '纳斯达克',   market: '美股' },
+  'usSPX':    { name: '标普500',    market: '美股' },
+  // 日韩（用东财 API）
+  'N225':     { name: '日经225',    market: '日韩', eastmoney: '100.N225' },
+  'KS11':     { name: '韩国KOSPI',  market: '日韩', eastmoney: '100.KS11' },
+};
+
+let indexData = [];
+
+async function fetchIndexData() {
+  // 1. 腾讯 API：A股 + 港股 + 美股
+  const tencentKeys = Object.keys(INDEX_CODES).filter(k => !INDEX_CODES[k].eastmoney);
+  const tencentUrl = `https://qt.gtimg.cn/q=${tencentKeys.join(',')}`;
+  const results = [];
+
+  try {
+    const resp = await fetch(tencentUrl);
+    const text = await resp.text();
+    for (const line of text.trim().split(';').filter(l => l.trim())) {
+      const match = line.match(/v_([a-zA-Z0-9_]+)="(.*)"/);
+      if (!match) continue;
+      const key = match[1];
+      const fields = match[2].split('~');
+      if (fields.length < 35) continue;
+      const cfg = INDEX_CODES[key];
+      if (!cfg) continue;
+      const price = parseFloat(fields[3]);
+      const changePct = parseFloat(fields[32]);
+      const prevClose = parseFloat(fields[4]);
+      const change = price - prevClose;
+      if (isNaN(price) || isNaN(changePct)) continue;
+      results.push({
+        code: key,
+        name: cfg.name,
+        market: cfg.market,
+        price: price,
+        change: change,
+        changePct: changePct,
+      });
+    }
+  } catch (e) { console.error('fetchIndexData tencent failed', e); }
+
+  // 2. 东财 API：日韩指数
+  const eastmoneyKeys = Object.keys(INDEX_CODES).filter(k => INDEX_CODES[k].eastmoney);
+  for (const key of eastmoneyKeys) {
+    const cfg = INDEX_CODES[key];
+    const url = `https://push2.eastmoney.com/api/qt/stock/get?secid=${cfg.eastmoney}&fields=f43,f57,f58,f60,f170`;
+    try {
+      const resp = await fetch(url);
+      const json = await resp.json();
+      const d = json.data;
+      if (!d) continue;
+      const price = d.f43 / 100;
+      const prevClose = d.f60 / 100;
+      const changePct = d.f170 / 100;
+      const change = price - prevClose;
+      if (isNaN(price) || isNaN(changePct)) continue;
+      results.push({
+        code: key,
+        name: cfg.name,
+        market: cfg.market,
+        price: price,
+        change: change,
+        changePct: changePct,
+      });
+    } catch (e) { console.error('fetchIndexData eastmoney failed', e); }
+  }
+
+  return results;
+}
+
 async function getYearStartPrice(code, year) {
   const prefix = code.startsWith('sh') ? 'sh' : 'sz';
   const num = code.replace(/^[a-z]+/, '');
@@ -361,9 +444,59 @@ function renderStats() {
   `;
 }
 
+// ======================== 全球指数渲染 ========================
+function renderIndexCards() {
+  if (indexData.length === 0) {
+    document.getElementById('indexSection').style.display = 'none';
+    return;
+  }
+  document.getElementById('indexSection').style.display = 'block';
+
+  // 按市场分组
+  const groups = {};
+  indexData.forEach(idx => {
+    (groups[idx.market] ||= []).push(idx);
+  });
+
+  // 市场顺序
+  const marketOrder = ['A股', '港股', '美股', '日韩'];
+
+  let html = '';
+  for (const market of marketOrder) {
+    const items = groups[market];
+    if (!items || items.length === 0) continue;
+    html += `<div class="index-market-group">`;
+    html += `<div class="index-market-title">${market}</div>`;
+    html += `<div class="index-grid">`;
+    for (const idx of items) {
+      const up = idx.changePct >= 0;
+      const cls = up ? 'up' : idx.changePct < 0 ? 'down' : 'flat';
+      const sign = up ? '+' : '';
+      const priceStr = idx.price >= 10000
+        ? idx.price.toLocaleString('zh-CN', {maximumFractionDigits: 2})
+        : idx.price.toFixed(2);
+      const changeStr = Math.abs(idx.change).toFixed(2);
+      html += `
+        <div class="index-card">
+          <span class="index-market-label">${market}</span>
+          <div class="index-name">${idx.name}</div>
+          <div class="index-price">${priceStr}</div>
+          <div class="index-change-row">
+            <span class="index-change ${cls}">${sign}${idx.change >= 0 ? '+' : '-'}${changeStr}</span>
+            <span class="index-change-pct ${cls}">${sign}${idx.changePct.toFixed(2)}%</span>
+          </div>
+        </div>
+      `;
+    }
+    html += `</div></div>`;
+  }
+
+  document.getElementById('indexCards').innerHTML = html;
+}
+
 function refreshAll() {
   updateStatus('正在获取实时数据...');
-  fetchETFData().then(etfs => {
+  Promise.all([fetchETFData(), fetchIndexData()]).then(([etfs, indices]) => {
     if (etfs && etfs.length > 0) {
       data = etfs;
       dataSource = '腾讯财经';
@@ -371,11 +504,17 @@ function refreshAll() {
       renderCharts();
       renderTable();
       renderStats();
+      // 指数数据
+      if (indices && indices.length > 0) {
+        indexData = indices;
+        renderIndexCards();
+      }
       toast('数据已刷新');
       // 保存到 storage 供 popup 使用
       try {
         chrome.storage?.local?.set({
           aidinpan_etfs: etfs,
+          aidinpan_indices: indices,
           last_update: Date.now(),
           source: 'tencent_api'
         });
@@ -551,7 +690,7 @@ setTimeout(() => {
   }
   try {
     if (typeof chrome !== 'undefined' && chrome.storage?.local?.get) {
-      chrome.storage.local.get(['aidinpan_etfs', 'last_update', 'source'], (result) => {
+      chrome.storage.local.get(['aidinpan_etfs', 'aidinpan_indices', 'last_update', 'source'], (result) => {
         if (initDone) return;
         initDone = true;
         if (result?.aidinpan_etfs && result.aidinpan_etfs.length > 0 && result.source === 'tencent_api') {
@@ -563,6 +702,11 @@ setTimeout(() => {
           renderCharts();
           renderTable();
           renderStats();
+          // 恢复指数数据
+          if (result?.aidinpan_indices && result.aidinpan_indices.length > 0) {
+            indexData = result.aidinpan_indices;
+            renderIndexCards();
+          }
           toast('已加载缓存数据');
         } else {
           refreshAll();
