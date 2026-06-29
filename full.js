@@ -1,3 +1,10 @@
+// ======================== ECharts 可用性检查 ========================
+if (typeof echarts === 'undefined') {
+  document.body.innerHTML = '<div style="padding:40px;color:#ff7b72;">' +
+    '<h2>ECharts 加载失败</h2><p>请检查 echarts.min.js 是否正确加载，或刷新扩展后重试。</p></div>';
+  throw new Error('ECharts not loaded');
+}
+
 // ======================== 智能板块分类 ========================
 function classifySector(name) {
   const n = name;
