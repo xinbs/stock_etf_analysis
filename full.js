@@ -765,6 +765,14 @@ window.addEventListener('resize', () => {
   indexChart?.resize();
 });
 
+function renderDefault() {
+  dataSource = '默认';
+  updateStatus('默认数据 · 38只ETF · 点击刷新获取最新');
+  renderCharts();
+  renderTable();
+  renderStats();
+}
+
 // 自动初始化：优先读缓存，否则直接刷新，有超时保护
 setTimeout(() => {
   let initDone = false;
@@ -787,24 +795,34 @@ setTimeout(() => {
           renderCharts();
           renderTable();
           renderStats();
-          // 恢复指数数据
           if (result?.aidinpan_indices && result.aidinpan_indices.length > 0) {
             indexData = result.aidinpan_indices;
             renderIndexAll();
           }
           toast('已加载缓存数据');
         } else {
+          renderDefault();
           refreshAll();
         }
       });
-      // 3秒超时保护：如果 storage 回调未执行，强制刷新
-      setTimeout(doInit, 3000);
+      setTimeout(() => {
+        if (!initDone) {
+          initDone = true;
+          renderDefault();
+          refreshAll();
+        }
+      }, 3000);
     } else {
-      doInit(); // chrome.storage 不可用，直接刷新
+      initDone = true;
+      renderDefault();
+      refreshAll();
     }
   } catch (e) {
     console.error('init error', e);
-    doInit();
+    if (!initDone) {
+      initDone = true;
+      renderDefault();
+    }
   }
 }, 300);
 
