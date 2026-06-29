@@ -1,15 +1,18 @@
 // ======================== ECharts 可用性检查 ========================
 if (typeof echarts === 'undefined') {
-  document.body.innerHTML = '<div style="padding:40px;color:#ff7b72;">' +
-    '<h2>ECharts 加载失败</h2><p>请检查 echarts.min.js 是否正确加载，或刷新扩展后重试。</p></div>';
-  throw new Error('ECharts not loaded');
+  const warn = document.createElement('div');
+  warn.style.cssText = 'position:fixed;top:0;left:0;right:0;padding:20px;background:#da3633;color:white;z-index:99999;font-size:16px;text-align:center;';
+  warn.innerHTML = '<b>ECharts 加载失败</b> — 请检查 echarts.min.js 是否存在，或刷新扩展后重试。';
+  document.body.appendChild(warn);
+} else {
+  // ECharts 加载成功，继续执行
 }
 
 // ======================== 诊断信息 ========================
 const diag = document.createElement('div');
 diag.id = 'diag';
 diag.style.cssText = 'position:fixed;top:0;left:0;right:0;padding:8px 16px;background:#238636;color:white;z-index:9999;font-size:13px;font-family:monospace;transition:background 0.3s;';
-diag.textContent = '✅ 脚本已加载 | ECharts v' + echarts.version + ' | 初始化中...';
+diag.textContent = '✅ full.js v4 已执行 | ECharts: ' + (typeof echarts !== 'undefined' ? 'v' + echarts.version : '未加载') + ' | 初始化中...';
 document.body.insertBefore(diag, document.body.firstChild);
 function setDiag(msg, bg) {
   diag.textContent = msg;
