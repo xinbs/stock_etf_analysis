@@ -255,7 +255,7 @@ DEFAULT.forEach(e => e.sector = classifySector(e.name));
 let data = [...DEFAULT];
 let sortCol = 'daily', sortDir = 'desc';
 let dataSource = '默认';
-let dailyChart = null, ytdChart = null;
+let dailyChart = null, ytdChart = null, indexChart = null;
 
 // ======================== 从扩展 Storage 读取 ========================
 function loadFromStorage() {
@@ -445,13 +445,17 @@ function renderStats() {
 }
 
 // ======================== 全球指数渲染 ========================
-function renderIndexCards() {
+function renderIndexAll() {
   if (indexData.length === 0) {
     document.getElementById('indexSection').style.display = 'none';
     return;
   }
   document.getElementById('indexSection').style.display = 'block';
+  renderIndexCards();
+  renderIndexChart();
+}
 
+function renderIndexCards() {
   // 按市场分组
   const groups = {};
   indexData.forEach(idx => {
@@ -494,6 +498,62 @@ function renderIndexCards() {
   document.getElementById('indexCards').innerHTML = html;
 }
 
+function renderIndexChart() {
+  const sorted = [...indexData].sort((a, b) => a.changePct - b.changePct);
+  const upColor = '#ff7b72';
+  const downColor = '#7ee787';
+  const gridColor = '#30363d';
+  const textColor = '#c9d1d9';
+
+  if (!indexChart) indexChart = echarts.init(document.getElementById('indexChartBox'));
+  indexChart.setOption({
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      backgroundColor: '#161b22',
+      borderColor: '#30363d',
+      textStyle: { color: textColor },
+      formatter: function(params) {
+        const p = params[0];
+        const sign = p.value >= 0 ? '+' : '';
+        return p.name + '<br/>涨跌: ' + sign + p.value.toFixed(2) + '%';
+      }
+    },
+    grid: { left: '22%', right: '15%', top: '5%', bottom: '5%' },
+    xAxis: {
+      type: 'value',
+      axisLabel: { color: '#8b949e', fontSize: 11, formatter: '{value}%' },
+      splitLine: { lineStyle: { color: gridColor, type: 'dashed' } },
+      axisLine: { lineStyle: { color: gridColor } }
+    },
+    yAxis: {
+      type: 'category',
+      data: sorted.map(s => s.name),
+      axisLabel: { color: textColor, fontSize: 11, interval: 0, width: 120, overflow: 'break' },
+      axisLine: { lineStyle: { color: gridColor } },
+      axisTick: { show: false }
+    },
+    series: [{
+      name: '涨跌幅',
+      type: 'bar',
+      data: sorted.map(s => ({
+        value: s.changePct,
+        itemStyle: { color: s.changePct >= 0 ? upColor : downColor, borderRadius: 3 }
+      })),
+      label: {
+        show: true, position: 'right', color: textColor, fontSize: 11, fontWeight: 'bold',
+        formatter: function(p) {
+          const sign = p.value >= 0 ? '+' : '';
+          return sign + p.value.toFixed(2) + '%';
+        }
+      },
+      barWidth: '55%'
+    }],
+    animationDuration: 600
+  }, true);
+}
+
 function refreshAll() {
   updateStatus('正在获取实时数据...');
   Promise.all([fetchETFData(), fetchIndexData()]).then(([etfs, indices]) => {
@@ -507,7 +567,7 @@ function refreshAll() {
       // 指数数据
       if (indices && indices.length > 0) {
         indexData = indices;
-        renderIndexCards();
+        renderIndexAll();
       }
       toast('数据已刷新');
       // 保存到 storage 供 popup 使用
@@ -678,6 +738,7 @@ function toast(m) { const t = document.getElementById('toast'); t.textContent = 
 window.addEventListener('resize', () => {
   dailyChart?.resize();
   ytdChart?.resize();
+  indexChart?.resize();
 });
 
 // 自动初始化：优先读缓存，否则直接刷新，有超时保护
@@ -705,7 +766,7 @@ setTimeout(() => {
           // 恢复指数数据
           if (result?.aidinpan_indices && result.aidinpan_indices.length > 0) {
             indexData = result.aidinpan_indices;
-            renderIndexCards();
+            renderIndexAll();
           }
           toast('已加载缓存数据');
         } else {
@@ -724,6 +785,20 @@ setTimeout(() => {
 }, 300);
 
 // ======================== 事件绑定 ========================
+// 指数 tab 切换
+document.querySelectorAll('.index-tab').forEach(tab => {
+  tab.addEventListener('click', (e) => {
+    const targetTab = e.target.dataset.tab;
+    document.querySelectorAll('.index-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.index-tab-panel').forEach(p => p.classList.remove('active'));
+    e.target.classList.add('active');
+    document.getElementById('tab-' + targetTab).classList.add('active');
+    if (targetTab === 'chart' && indexChart) {
+      indexChart.resize();
+    }
+  });
+});
+
 // 添加对话框
 document.getElementById('btnAddOpen').addEventListener('click', () => {
   document.getElementById('addDialog').style.display = 'block';

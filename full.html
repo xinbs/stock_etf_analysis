@@ -80,9 +80,12 @@
     .index-change-pct.down { background: #1f3d1f; color: #7ee787; }
     .index-change-pct.flat { background: #30363d; color: #8b949e; }
     .index-divider { height: 1px; background: #21262d; margin: 8px 0; }
-    .index-market-group { margin-bottom: 10px; }
-    .index-market-title { font-size: 12px; color: #58a6ff; font-weight: 600; margin-bottom: 8px; padding-left: 4px; border-left: 3px solid #58a6ff; }
-  </style>
+    .index-tabs { display: flex; gap: 4px; margin-top: 8px; margin-bottom: 12px; }
+    .index-tab { padding: 4px 14px; border-radius: 6px; font-size: 12px; cursor: pointer; border: 1px solid #30363d; background: #0d1117; color: #8b949e; }
+    .index-tab.active { background: #1f6feb; border-color: #1f6feb; color: white; }
+    .index-chart-box { height: 320px; margin-top: 8px; }
+    .index-tab-panel { display: none; }
+    .index-tab-panel.active { display: block; }
 </head>
 <body>
   <h1>ETF 板块大盘分析器（猪肉群专用）</h1>
@@ -98,7 +101,16 @@
 
   <div class="card index-section" id="indexSection" style="display:none">
     <h2>🌍 全球指数监控</h2>
-    <div id="indexCards"></div>
+    <div class="index-tabs">
+      <span class="index-tab active" data-tab="cards">卡片视图</span>
+      <span class="index-tab" data-tab="chart">图表排名</span>
+    </div>
+    <div class="index-tab-panel active" id="tab-cards">
+      <div id="indexCards"></div>
+    </div>
+    <div class="index-tab-panel" id="tab-chart">
+      <div id="indexChartBox" class="index-chart-box"></div>
+    </div>
   </div>
 
   <div class="grid">
