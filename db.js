@@ -12,12 +12,15 @@ const STORES = {
 };
 
 let dbPromise = null;
+let dbInstance = null;
 
-export function resetDbConnection() {
-  if (dbPromise) {
-    // 不主动 close，因为 deleteDatabase 后原 promise 还能 resolve
-    dbPromise = null;
+export async function resetDbConnection() {
+  // 必须先关掉已打开的 db connection，否则 deleteDatabase 会被 onblocked 卡住
+  if (dbInstance) {
+    try { dbInstance.close(); } catch (e) {}
+    dbInstance = null;
   }
+  dbPromise = null;
 }
 
 export function openDB() {
@@ -25,7 +28,25 @@ export function openDB() {
   dbPromise = new Promise((resolve, reject) => {
     const req = indexedDB.open(DB_NAME, DB_VERSION);
     req.onerror = () => reject(req.error);
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      dbInstance = req.result;
+      // 自动清理（db 关闭或被删时清掉缓存的 instance）
+      dbInstance.onclose = () => {
+        if (dbInstance === req.result) {
+          dbInstance = null;
+          dbPromise = null;
+        }
+      };
+      dbInstance.onversionchange = () => {
+        // 别处请求升级：主动关连接让出
+        try { dbInstance.close(); } catch (e) {}
+        if (dbInstance === req.result) {
+          dbInstance = null;
+          dbPromise = null;
+        }
+      };
+      resolve(req.result);
+    };
     req.onupgradeneeded = (event) => {
       const db = event.target.result;
       for (const [name, cfg] of Object.entries(STORES)) {

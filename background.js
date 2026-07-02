@@ -12,6 +12,9 @@ import {
 
 const COLLECTION_ALARM_NAME = 'dailyCollect';
 const ALARM_PERIOD_MINUTES = 5;
+const KEEPALIVE_ALARM_NAME = 'swKeepalive';
+let nukeInProgress = false;
+let nukeInProgressExpiresAt = 0;
 
 // ===== 指数 K 线年初开盘价（复用 full.js 逻辑） =====
 async function getYearStartPrice(code, year) {
@@ -526,23 +529,39 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // 彻底清掉整个 DB 再重建（用于事务残留数据修复）
     (async () => {
       try {
-        console.log('[bg] nukeAndReimport: dropping DB');
-        await new Promise((resolve, reject) => {
-          const req = indexedDB.deleteDatabase('etf_index_history');
-          req.onsuccess = () => resolve();
-          req.onerror = () => reject(req.error);
-          req.onblocked = () => resolve(); // 即使被阻塞也继续
-        });
-        // 重置单例
+        console.log('[bg] nukeAndReimport: start');
+        nukeInProgress = true;
+        nukeInProgressExpiresAt = Date.now() + 5 * 60 * 1000; // 5 分钟保活窗口
+        // 每分钟打一次 SW keep-alive（chrome.alarms 最小粒度 1 分钟）
+        try { chrome.alarms.create(KEEPALIVE_ALARM_NAME, { periodInMinutes: 0.5, delayInMinutes: 0.5 }); } catch (e) {
+          try { chrome.alarms.create(KEEPALIVE_ALARM_NAME, { periodInMinutes: 1 }); } catch (e2) {}
+        }
+
+        // 1) 先关 connection（resetDbConnection 现在会 close）
         resetDbConnection();
-        // 重新打开 + 导入历史 + 强制今日采集
-        await importHistoryIfNeeded();
+        // 2) 等 microtask，让 close 真正生效
+        await new Promise(r => setTimeout(r, 200));
+        // 3) 删 DB
+        const dropped = await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('deleteDatabase timeout (other tabs?)')), 5000);
+          const req = indexedDB.deleteDatabase('etf_index_history');
+          req.onsuccess = () => { clearTimeout(timeout); resolve(true); };
+          req.onerror = () => { clearTimeout(timeout); reject(req.error); };
+          req.onblocked = () => console.warn('[bg] deleteDatabase blocked, will wait');
+        });
+        console.log('[bg] nukeAndReimport: dropped =', dropped);
+        // 4) 重新打开 + 导入历史 + 强制今日采集
+        const histResult = await importHistoryIfNeeded();
+        console.log('[bg] nukeAndReimport: history =', histResult);
         const daily = await collectDailyData(true);
         const status = await getMeta('historyImported');
-        sendResponse({ success: true, daily, historyImported: status });
+        sendResponse({ success: true, historyImported: status, histResult, daily });
       } catch (e) {
         console.error('[bg] nukeAndReimport failed', e);
-        sendResponse({ success: false, error: e.message });
+        sendResponse({ success: false, error: e.message, stack: e.stack });
+      } finally {
+        nukeInProgress = false;
+        try { chrome.alarms.clear(KEEPALIVE_ALARM_NAME); } catch (e) {}
       }
     })();
     return true;
@@ -646,6 +665,12 @@ chrome.alarms.onAlarm.addListener((alarm) => {
     console.log('[bg] alarm fired');
     if (shouldCollectNow()) {
       collectDailyData();
+    }
+  } else if (alarm.name === KEEPALIVE_ALARM_NAME) {
+    // 仅用于阻止 SW 在长任务中被 Chrome 强制终止
+    if (Date.now() > nukeInProgressExpiresAt) {
+      nukeInProgress = false;
+      try { chrome.alarms.clear(KEEPALIVE_ALARM_NAME); } catch (e) {}
     }
   }
 });
