@@ -574,9 +574,31 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   if (request.action === 'dbStatus') {
     (async () => {
-      const months = await getAllAvailableMonths();
-      const imported = await getMeta('historyImported');
-      sendResponse({ success: true, months, historyImported: !!imported });
+      try {
+        const months = await getAllAvailableMonths();
+        const imported = await getMeta('historyImported');
+        // 探针：报 indices / sectors 的真实数量和样本
+        const db = await openDB();
+        const tx = db.transaction(['indices', 'sectors'], 'readonly');
+        const idxStore = tx.objectStore('indices');
+        const secStore = tx.objectStore('sectors');
+        const idxKeys = await new Promise(r => { const req = idxStore.index('date').getAllKeys(); req.onsuccess = () => r(req.result); req.onerror = () => r([]); });
+        const secKeys = await new Promise(r => { const req = secStore.index('date').getAllKeys(); req.onsuccess = () => r(req.result); req.onerror = () => r([]); });
+        sendResponse({
+          success: true,
+          months,
+          historyImported: imported,
+          indicesCount: idxKeys.length,
+          sectorsCount: secKeys.length,
+          indicesMinDate: idxKeys.filter(k => typeof k === 'string').sort()[0] || null,
+          indicesMaxDate: idxKeys.filter(k => typeof k === 'string').sort().slice(-1)[0] || null,
+          sectorsMinDate: secKeys.filter(k => typeof k === 'string').sort()[0] || null,
+          sectorsMaxDate: secKeys.filter(k => typeof k === 'string').sort().slice(-1)[0] || null,
+        });
+      } catch (e) {
+        console.error('[bg] dbStatus failed', e);
+        sendResponse({ success: false, error: e.message });
+      }
     })();
     return true;
   }

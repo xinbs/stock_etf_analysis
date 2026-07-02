@@ -1595,6 +1595,33 @@ async function addETF() {
 
 function toast(m) { const t = document.getElementById('toast'); t.textContent = m; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2000); }
 
+// 诊断：报告 DB 真实状态（按 D 触发）
+async function diagnoseDb() {
+  try {
+    const res = await new Promise(r => {
+      if (!chrome.runtime?.sendMessage) return r(null);
+      chrome.runtime.sendMessage({ action: 'dbStatus' }, r);
+    });
+    console.log('[diagnose]', res);
+    const msg = res?.success
+      ? `indices ${res.indicesCount} 条 (${res.indicesMinDate}~${res.indicesMaxDate}) · sectors ${res.sectorsCount} 条 · imported=${res.historyImported}`
+      : '诊断失败: ' + (res?.error || 'no resp');
+    updateStatus(msg);
+    toast(msg);
+  } catch (e) {
+    console.error('[diagnose] failed', e);
+    updateStatus('诊断失败: ' + e.message);
+  }
+}
+
+document.addEventListener('keydown', (e) => {
+  // D 键触发数据库诊断
+  if (e.key === 'd' || e.key === 'D') {
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.tagName === 'SELECT')) return;
+    diagnoseDb();
+  }
+});
+
 // 窗口大小变化时重绘图表
 window.addEventListener('resize', () => {
   dailyChart?.resize();
