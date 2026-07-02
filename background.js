@@ -463,23 +463,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     (async () => {
       try {
         const months = await getAllAvailableMonths();
-        // 加上指数历史覆盖的月份（start ~ end 之间的所有月）
+        // 加上指数历史覆盖的月份：cursor 遍历 date index 拿真实 date 值
         const db = await openDB();
         const tx = db.transaction('indices', 'readonly');
-        const store = tx.objectStore('indices');
-        const dateIdx = store.index('date');
-        const all = await new Promise(r => {
-          const req = dateIdx.getAllKeys();
-          req.onsuccess = () => r(req.result);
+        const dateIdx = tx.objectStore('indices').index('date');
+        const allDates = await new Promise(r => {
+          const out = [];
+          const req = dateIdx.openKeyCursor();
+          req.onsuccess = () => {
+            const cur = req.result;
+            if (cur) { out.push(cur.key); cur.continue(); } else r(out);
+          };
           req.onerror = () => r([]);
         });
         const monthSet = new Set(months);
+        const dateStrings = allDates.filter(k => typeof k === 'string');
         let minDate = null, maxDate = null;
-        for (const k of all) {
-          if (typeof k === 'string' && /^\d{4}-\d{2}/.test(k)) {
-            if (!minDate || k < minDate) minDate = k;
-            if (!maxDate || k > maxDate) maxDate = k;
-          }
+        for (const k of dateStrings) {
+          if (!minDate || k < minDate) minDate = k;
+          if (!maxDate || k > maxDate) maxDate = k;
         }
         if (minDate && maxDate) {
           const [sy, sm] = minDate.slice(0, 7).split('-').map(Number);
@@ -622,23 +624,42 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       try {
         const months = await getAllAvailableMonths();
         const imported = await getMeta('historyImported');
-        // 探针：报 indices / sectors 的真实数量和样本
+        // 探针：用 cursor 遍历 date index 拿真实 key 值
         const db = await openDB();
         const tx = db.transaction(['indices', 'sectors'], 'readonly');
-        const idxStore = tx.objectStore('indices');
-        const secStore = tx.objectStore('sectors');
-        const idxKeys = await new Promise(r => { const req = idxStore.index('date').getAllKeys(); req.onsuccess = () => r(req.result); req.onerror = () => r([]); });
-        const secKeys = await new Promise(r => { const req = secStore.index('date').getAllKeys(); req.onsuccess = () => r(req.result); req.onerror = () => r([]); });
+        const idxDateIdx = tx.objectStore('indices').index('date');
+        const secDateIdx = tx.objectStore('sectors').index('date');
+        // cursor 拿 date index 的实际 key
+        const idxDates = await new Promise(r => {
+          const out = [];
+          const req = idxDateIdx.openKeyCursor();
+          req.onsuccess = () => {
+            const cur = req.result;
+            if (cur) { out.push(cur.key); cur.continue(); } else r(out);
+          };
+          req.onerror = () => r([]);
+        });
+        const secDates = await new Promise(r => {
+          const out = [];
+          const req = secDateIdx.openKeyCursor();
+          req.onsuccess = () => {
+            const cur = req.result;
+            if (cur) { out.push(cur.key); cur.continue(); } else r(out);
+          };
+          req.onerror = () => r([]);
+        });
+        const idxDatesStr = idxDates.filter(k => typeof k === 'string').sort();
+        const secDatesStr = secDates.filter(k => typeof k === 'string').sort();
         sendResponse({
           success: true,
           months,
           historyImported: imported,
-          indicesCount: idxKeys.length,
-          sectorsCount: secKeys.length,
-          indicesMinDate: idxKeys.filter(k => typeof k === 'string').sort()[0] || null,
-          indicesMaxDate: idxKeys.filter(k => typeof k === 'string').sort().slice(-1)[0] || null,
-          sectorsMinDate: secKeys.filter(k => typeof k === 'string').sort()[0] || null,
-          sectorsMaxDate: secKeys.filter(k => typeof k === 'string').sort().slice(-1)[0] || null,
+          indicesCount: idxDates.length,
+          sectorsCount: secDates.length,
+          indicesMinDate: idxDatesStr[0] || null,
+          indicesMaxDate: idxDatesStr.slice(-1)[0] || null,
+          sectorsMinDate: secDatesStr[0] || null,
+          sectorsMaxDate: secDatesStr.slice(-1)[0] || null,
         });
       } catch (e) {
         console.error('[bg] dbStatus failed', e);

@@ -155,7 +155,16 @@ export async function getAllAvailableMonths() {
   const tx = await transaction('sectors', 'readonly');
   const store = tx.objectStore('sectors');
   const idx = store.index('date');
-  const all = await requestToPromise(idx.getAllKeys());
+  // 用 cursor 拿真正的 date index key（getAllKeys 在 index 上不传 query 会返回主键）
+  const all = await new Promise((resolve, reject) => {
+    const out = [];
+    const req = idx.openKeyCursor();
+    req.onsuccess = () => {
+      const cur = req.result;
+      if (cur) { out.push(cur.key); cur.continue(); } else resolve(out);
+    };
+    req.onerror = () => reject(req.error);
+  });
   const months = new Set();
   for (const key of all) {
     if (typeof key === 'string' && key.length >= 7) {
