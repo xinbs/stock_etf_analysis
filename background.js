@@ -5,7 +5,8 @@ import { ETF_CODES, DEFAULT_YTD, INDEX_CODES, classifySector, fmtDate, fmtYearMo
 import {
   openDB, saveIndexRecord, saveSectorRecord, saveETFRecord,
   getSectorsByMonth, getAllAvailableMonths, bulkImportIndices,
-  getIndexByDate, hasTodayMarketRecord, setMeta, getMeta
+  getIndexByDate, hasTodayMarketRecord, setMeta, getMeta,
+  clearHistoryIndices, getIndicesByDateRange, getSectorsByDateRange
 } from './db.js';
 
 const COLLECTION_ALARM_NAME = 'dailyCollect';
@@ -345,7 +346,6 @@ async function importHistoryIfNeeded() {
 
     // 升级路径：从 v1 重导前先清掉旧的历史记录（changePct/ytd 是 null 的 v1 数据）
     if (imported === true || imported === 1) {
-      const { clearHistoryIndices } = await import('./db.js');
       const cleared = await clearHistoryIndices();
       console.log(`[bg] cleared ${cleared} legacy v1 history indices before re-import`);
     }
@@ -457,54 +457,62 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   if (request.action === 'getAvailableMonths') {
     (async () => {
-      const months = await getAllAvailableMonths();
-      // 加上指数历史覆盖的月份（start ~ end 之间的所有月）
-      const { openDB } = await import('./db.js');
-      const db = await openDB();
-      const tx = db.transaction('indices', 'readonly');
-      const store = tx.objectStore('indices');
-      const dateIdx = store.index('date');
-      const all = await new Promise(r => {
-        const req = dateIdx.getAllKeys();
-        req.onsuccess = () => r(req.result);
-        req.onerror = () => r([]);
-      });
-      const monthSet = new Set(months);
-      let minDate = null, maxDate = null;
-      for (const k of all) {
-        if (typeof k === 'string' && /^\d{4}-\d{2}/.test(k)) {
-          if (!minDate || k < minDate) minDate = k;
-          if (!maxDate || k > maxDate) maxDate = k;
+      try {
+        const months = await getAllAvailableMonths();
+        // 加上指数历史覆盖的月份（start ~ end 之间的所有月）
+        const db = await openDB();
+        const tx = db.transaction('indices', 'readonly');
+        const store = tx.objectStore('indices');
+        const dateIdx = store.index('date');
+        const all = await new Promise(r => {
+          const req = dateIdx.getAllKeys();
+          req.onsuccess = () => r(req.result);
+          req.onerror = () => r([]);
+        });
+        const monthSet = new Set(months);
+        let minDate = null, maxDate = null;
+        for (const k of all) {
+          if (typeof k === 'string' && /^\d{4}-\d{2}/.test(k)) {
+            if (!minDate || k < minDate) minDate = k;
+            if (!maxDate || k > maxDate) maxDate = k;
+          }
         }
-      }
-      if (minDate && maxDate) {
-        const [sy, sm] = minDate.slice(0, 7).split('-').map(Number);
-        const [ey, em] = maxDate.slice(0, 7).split('-').map(Number);
-        let y = sy, m = sm;
-        while (y < ey || (y === ey && m <= em)) {
-          monthSet.add(`${y}-${String(m).padStart(2, '0')}`);
-          m++;
-          if (m > 12) { m = 1; y++; }
+        if (minDate && maxDate) {
+          const [sy, sm] = minDate.slice(0, 7).split('-').map(Number);
+          const [ey, em] = maxDate.slice(0, 7).split('-').map(Number);
+          let y = sy, m = sm;
+          while (y < ey || (y === ey && m <= em)) {
+            monthSet.add(`${y}-${String(m).padStart(2, '0')}`);
+            m++;
+            if (m > 12) { m = 1; y++; }
+          }
         }
+        sendResponse({ success: true, months: Array.from(monthSet).sort() });
+      } catch (e) {
+        console.error('[bg] getAvailableMonths failed', e);
+        sendResponse({ success: false, error: e.message, months: [] });
       }
-      sendResponse({ success: true, months: Array.from(monthSet).sort() });
     })();
     return true;
   }
   if (request.action === 'getIndexMonthly') {
     (async () => {
-      const [y, m] = request.yearMonth.split('-').map(Number);
-      const lastDay = new Date(y, m, 0).getDate();
-      const start = `${request.yearMonth}-01`;
-      const end = `${request.yearMonth}-${String(lastDay).padStart(2, '0')}`;
-      const { getIndicesByDateRange } = await import('./db.js');
-      const indices = await getIndicesByDateRange(start, end);
-      // 每个 code 取该月最后一条
-      const latest = {};
-      for (const r of indices) {
-        if (!latest[r.code] || r.date > latest[r.code].date) latest[r.code] = r;
+      try {
+        const [y, m] = request.yearMonth.split('-').map(Number);
+        const lastDay = new Date(y, m, 0).getDate();
+        const start = `${request.yearMonth}-01`;
+        const end = `${request.yearMonth}-${String(lastDay).padStart(2, '0')}`;
+        const indices = await getIndicesByDateRange(start, end);
+        // 每个 code 取该月最后一条
+        const latest = {};
+        for (const r of indices) {
+          if (!latest[r.code] || r.date > latest[r.code].date) latest[r.code] = r;
+        }
+        sendResponse({ success: true, indices: Object.values(latest) });
+      } catch (e) {
+        console.error('[bg] getIndexMonthly failed', e);
+        sendResponse({ success: false, error: e.message, indices: [] });
       }
-      sendResponse({ success: true, indices: Object.values(latest) });
     })();
     return true;
   }
@@ -519,33 +527,41 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   if (request.action === 'getIndexRangeByMonths') {
     (async () => {
-      const { getIndicesByDateRange } = await import('./db.js');
-      const data = {};
-      for (const ym of (request.months || [])) {
-        const [y, m] = ym.split('-').map(Number);
-        const lastDay = new Date(y, m, 0).getDate();
-        const start = `${ym}-01`;
-        const end = `${ym}-${String(lastDay).padStart(2, '0')}`;
-        const records = await getIndicesByDateRange(start, end);
-        data[ym] = records;
+      try {
+        const data = {};
+        for (const ym of (request.months || [])) {
+          const [y, m] = ym.split('-').map(Number);
+          const lastDay = new Date(y, m, 0).getDate();
+          const start = `${ym}-01`;
+          const end = `${ym}-${String(lastDay).padStart(2, '0')}`;
+          const records = await getIndicesByDateRange(start, end);
+          data[ym] = records;
+        }
+        sendResponse({ success: true, data });
+      } catch (e) {
+        console.error('[bg] getIndexRangeByMonths failed', e);
+        sendResponse({ success: false, error: e.message, data: {} });
       }
-      sendResponse({ success: true, data });
     })();
     return true;
   }
   if (request.action === 'getSectorRangeByMonths') {
     (async () => {
-      const { getSectorsByDateRange } = await import('./db.js');
-      const data = {};
-      for (const ym of (request.months || [])) {
-        const [y, m] = ym.split('-').map(Number);
-        const lastDay = new Date(y, m, 0).getDate();
-        const start = `${ym}-01`;
-        const end = `${ym}-${String(lastDay).padStart(2, '0')}`;
-        const records = await getSectorsByDateRange(start, end);
-        data[ym] = records;
+      try {
+        const data = {};
+        for (const ym of (request.months || [])) {
+          const [y, m] = ym.split('-').map(Number);
+          const lastDay = new Date(y, m, 0).getDate();
+          const start = `${ym}-01`;
+          const end = `${ym}-${String(lastDay).padStart(2, '0')}`;
+          const records = await getSectorsByDateRange(start, end);
+          data[ym] = records;
+        }
+        sendResponse({ success: true, data });
+      } catch (e) {
+        console.error('[bg] getSectorRangeByMonths failed', e);
+        sendResponse({ success: false, error: e.message, data: {} });
       }
-      sendResponse({ success: true, data });
     })();
     return true;
   }

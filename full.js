@@ -870,9 +870,28 @@ function renderIndexYtdChart() {
 async function loadAvailableMonths() {
   return new Promise((resolve) => {
     if (!chrome.runtime?.sendMessage) return resolve([]);
-    chrome.runtime.sendMessage({ action: 'getAvailableMonths' }, (res) => {
-      resolve(res?.success ? res.months : []);
-    });
+    let done = false;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      console.warn('[monthly] loadAvailableMonths timeout');
+      resolve([]);
+    }, 5000);
+    try {
+      chrome.runtime.sendMessage({ action: 'getAvailableMonths' }, (res) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        if (chrome.runtime?.lastError) {
+          console.error('[monthly] lastError:', chrome.runtime.lastError);
+          return resolve([]);
+        }
+        resolve(res?.success ? res.months : []);
+      });
+    } catch (e) {
+      console.error('[monthly] loadAvailableMonths failed', e);
+      if (!done) { done = true; clearTimeout(timer); resolve([]); }
+    }
   });
 }
 
