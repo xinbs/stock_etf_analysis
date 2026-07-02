@@ -333,13 +333,23 @@ async function collectDailyData(force = false) {
 // ===== 历史数据导入 =====
 async function importHistoryIfNeeded() {
   const imported = await getMeta('historyImported');
-  if (imported) return { skipped: true };
+  // v2：历史导入时同时算 changePct / ytd。v1 导入的 records 都是 null，月报历史月份没数据。
+  const IMPORT_VERSION = 2;
+  if (imported === IMPORT_VERSION) return { skipped: true, reason: 'already imported v' + IMPORT_VERSION };
 
   // 从 chrome.runtime.getURL 加载 global_indices_2y.json
   try {
     const url = chrome.runtime.getURL('global_indices_2y.json');
     const resp = await fetch(url);
     const json = await resp.json();
+
+    // 升级路径：从 v1 重导前先清掉旧的历史记录（changePct/ytd 是 null 的 v1 数据）
+    if (imported === true || imported === 1) {
+      const { clearHistoryIndices } = await import('./db.js');
+      const cleared = await clearHistoryIndices();
+      console.log(`[bg] cleared ${cleared} legacy v1 history indices before re-import`);
+    }
+
     const records = [];
     const codeMap = {};
     for (const [key, cfg] of Object.entries(INDEX_CODES)) {
@@ -383,8 +393,8 @@ async function importHistoryIfNeeded() {
     }
 
     const { added, updated } = await bulkImportIndices(records);
-    await setMeta('historyImported', true);
-    console.log(`[bg] history import done: added=${added}, updated=${updated}`);
+    await setMeta('historyImported', IMPORT_VERSION);
+    console.log(`[bg] history import done: added=${added}, updated=${updated}, version=${IMPORT_VERSION}`);
     return { added, updated };
   } catch (e) {
     console.error('[bg] history import failed', e);
@@ -471,7 +481,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
   if (request.action === 'reimportHistory') {
     (async () => {
-      await setMeta('historyImported', false);
+      // 置 0 让 importHistoryIfNeeded 走重导流程（新版本会覆盖）
+      await setMeta('historyImported', 0);
       const result = await importHistoryIfNeeded();
       sendResponse({ success: true, result });
     })();

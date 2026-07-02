@@ -198,6 +198,22 @@ export async function bulkImportIndices(records) {
   return { added, updated };
 }
 
+// 清掉 source = 'global_indices_2y_json' 的旧历史记录（v1 → v2 升级用）
+export async function clearHistoryIndices() {
+  const db = await openDB();
+  const tx = db.transaction('indices', 'readwrite');
+  const store = tx.objectStore('indices');
+  const all = await requestToPromise(store.getAll());
+  let cleared = 0;
+  for (const r of all) {
+    if (r.source === 'global_indices_2y_json') {
+      await requestToPromise(store.delete(r.id));
+      cleared++;
+    }
+  }
+  return cleared;
+}
+
 // ===== 工具 =====
 function fmtDate(d = new Date()) {
   const year = d.getFullYear();
