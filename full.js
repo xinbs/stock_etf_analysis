@@ -1018,11 +1018,15 @@ async function renderMonthlyReport() {
     ]);
     monthlyDataCache = aggregateMonthlySectors(rawSectorRecords);
 
-    // 板块过滤器
+    // 板块过滤器（用 sectorRangeData 6 个月内所有 sector 列表，跨月份都能筛）
     const sectorFilter = document.getElementById('sectorFilter');
     if (sectorFilter) {
       const currentFilter = sectorFilter.value;
-      const allSectors = [...new Set(monthlyDataCache.map(s => s.sector))].sort();
+      const allSectorSet = new Set();
+      for (const ym of Object.keys(sectorRangeData)) {
+        for (const s of sectorRangeData[ym]) allSectorSet.add(s.sector);
+      }
+      const allSectors = [...allSectorSet].sort();
       sectorFilter.innerHTML = '<option value="">全部</option>';
       for (const s of allSectors) {
         const opt = document.createElement('option');
@@ -1045,7 +1049,7 @@ async function renderMonthlyReport() {
       renderEmptyChart('monthlySectorChart', `${yearMonth} 当月无板块数据（采集从今天开始）`);
       renderEmptyChart('bestWorstChart', `${yearMonth} 当月无板块数据（采集从今天开始）`);
     }
-    renderSectorTrendChartFromData(trendData);
+    renderSectorTrendChartFromData(trendData, indexRangeData);
     renderIndexVsSectorChartFromData(getPrevMonths(yearMonth, 6), indexRangeData, sectorRangeData);
 
     if (filtered.length > 0) {
@@ -1079,19 +1083,24 @@ function renderEmptyChart(id, text) {
 }
 
 // 同 renderSectorTrendChart 但接受预加载的数据，避免再发一次消息
-function renderSectorTrendChartFromData({ months, data: all }) {
+// 改：近 6 月指数 YTD 走势（板块历史从今天开始累，没价值；指数历史已有 2 年）
+function renderSectorTrendChartFromData({ months, data: all }, indexSeries) {
   const el = document.getElementById('sectorTrendChart');
   if (!el) return;
   if (!sectorTrendChart) sectorTrendChart = echarts.init(el);
-  const sectorSet = new Set();
+
+  // 按 index code 分组，每个 index 一条线
+  const codeMap = {};
   for (const ym of months) {
-    (all[ym] || []).forEach(s => sectorSet.add(s.sector));
+    for (const r of (indexSeries[ym] || [])) {
+      codeMap[r.code] = r;
+    }
   }
-  const sectors = Array.from(sectorSet).sort();
-  if (sectors.length === 0) {
+  const codes = Object.keys(codeMap);
+  if (codes.length === 0) {
     sectorTrendChart.clear();
     sectorTrendChart.setOption({
-      title: { text: '板块历史数据从今天开始累（每天收盘后自动采集）', left: 'center', top: 'center', textStyle: { color: '#8b949e', fontSize: 14 } }
+      title: { text: '指数历史暂无数据', left: 'center', top: 'center', textStyle: { color: '#8b949e', fontSize: 14 } }
     });
     return;
   }
@@ -1099,19 +1108,22 @@ function renderSectorTrendChartFromData({ months, data: all }) {
     '#58a6ff', '#7ee787', '#ff7b72', '#d2a8ff', '#ffa657',
     '#79c0ff', '#56d364', '#f0883e', '#a371f7', '#3fb950'
   ];
-  const series = sectors.map((sector, idx) => ({
-    name: sector,
-    type: 'line',
-    smooth: true,
-    symbol: 'circle',
-    symbolSize: 6,
-    data: months.map(ym => {
-      const s = (all[ym] || []).find(x => x.sector === sector);
-      return s ? s.avgYtd : null;
-    }),
-    lineStyle: { width: 2 },
-    itemStyle: { color: colors[idx % colors.length] }
-  }));
+  const series = codes.map((code, idx) => {
+    const cfg = codeMap[code];
+    return {
+      name: cfg.name || code,
+      type: 'line',
+      smooth: true,
+      symbol: 'circle',
+      symbolSize: 6,
+      data: months.map(ym => {
+        const rec = (indexSeries[ym] || []).find(r => r.code === code);
+        return rec && typeof rec.ytd === 'number' ? rec.ytd : null;
+      }),
+      lineStyle: { width: 2 },
+      itemStyle: { color: colors[idx % colors.length] }
+    };
+  });
   sectorTrendChart.setOption({
     backgroundColor: 'transparent',
     tooltip: {
