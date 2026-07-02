@@ -6,7 +6,8 @@ import {
   openDB, saveIndexRecord, saveSectorRecord, saveETFRecord,
   getSectorsByMonth, getAllAvailableMonths, bulkImportIndices,
   getIndexByDate, hasTodayMarketRecord, setMeta, getMeta,
-  clearHistoryIndices, getIndicesByDateRange, getSectorsByDateRange
+  clearHistoryIndices, getIndicesByDateRange, getSectorsByDateRange,
+  resetDbConnection
 } from './db.js';
 
 const COLLECTION_ALARM_NAME = 'dailyCollect';
@@ -533,7 +534,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           req.onblocked = () => resolve(); // 即使被阻塞也继续
         });
         // 重置单例
-        const { resetDbConnection } = await import('./db.js');
         resetDbConnection();
         // 重新打开 + 导入历史 + 强制今日采集
         await importHistoryIfNeeded();

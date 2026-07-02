@@ -1443,15 +1443,6 @@ async function renderIndexVsSectorChart(yearMonth, sectors) {
   if (!el) return;
   if (!indexVsSectorChart) indexVsSectorChart = echarts.init(el);
 
-  // 1. 拉所有月的指数日数据（聚合到月）
-  const { getIndicesByDateRange } = await import('./db.js');
-  // 导入走 ./db.js 在 background；这里全在 full.js，得通过 chrome.runtime 拿
-  // 简化：从 chrome.runtime 拉每月的指数（不实现，避免再多消息）
-  // 直接用 sectors 数据里的 avgDaily 走势 + 画一个沪深300 作为指数参考
-  // —— 实际更稳：从全表查 indices，跨月聚合
-  // 用 chrome.runtime 拿全量 indices (use new message)
-  // 为简化，新增一个 message getIndexRangeByMonths
-
   const indexSeries = await loadIndexRangeByMonths(months);
   const sectorSeries = await loadSectorRangeByMonths(months);
 
