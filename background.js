@@ -343,6 +343,7 @@ async function importHistoryIfNeeded() {
     const url = chrome.runtime.getURL('global_indices_2y.json');
     const resp = await fetch(url);
     const json = await resp.json();
+    console.log(`[bg] history import: loaded json with ${Object.keys(json).length} keys: ${Object.keys(json).join(', ')}`);
 
     // 升级路径：从 v1 重导前先清掉旧的历史记录（changePct/ytd 是 null 的 v1 数据）
     if (imported === true || imported === 1) {
@@ -392,7 +393,10 @@ async function importHistoryIfNeeded() {
       }
     }
 
+    console.log(`[bg] history import: prepared ${records.length} records, codeMap: ${JSON.stringify(codeMap)}, starting bulk import...`);
+    const t0 = Date.now();
     const { added, updated } = await bulkImportIndices(records);
+    console.log(`[bg] history import: bulkImportIndices returned added=${added} updated=${updated} in ${Date.now() - t0}ms`);
     await setMeta('historyImported', IMPORT_VERSION);
     console.log(`[bg] history import done: added=${added}, updated=${updated}, version=${IMPORT_VERSION}`);
     return { added, updated };

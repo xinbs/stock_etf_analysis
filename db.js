@@ -209,11 +209,15 @@ export async function getMeta(key) {
 // 拆成小批次，每批独立 transaction。
 export async function bulkImportIndices(records, batchSize = 200) {
   let added = 0, updated = 0;
+  const total = records.length;
   for (let i = 0; i < records.length; i += batchSize) {
     const batch = records.slice(i, i + batchSize);
     const result = await bulkImportBatch(batch);
     added += result.added;
     updated += result.updated;
+    if (typeof console !== 'undefined' && i % 1000 === 0) {
+      console.log(`[bulkImportIndices] progress: ${i + batch.length}/${total} (added=${added}, updated=${updated})`);
+    }
   }
   return { added, updated };
 }
@@ -224,24 +228,34 @@ async function bulkImportBatch(records) {
   const store = tx.objectStore('indices');
   const dateIdx = store.index('date');
   let added = 0, updated = 0;
-  for (const rec of records) {
-    const existing = await requestToPromise(dateIdx.getAll(IDBKeyRange.only(rec.date)));
-    const dup = existing.find(r => r.code === rec.code);
-    if (dup) {
-      Object.assign(dup, rec, { id: dup.id });
-      await requestToPromise(store.put(dup));
-      updated++;
-    } else {
-      await requestToPromise(store.add(rec));
-      added++;
+  try {
+    for (const rec of records) {
+      const existing = await requestToPromise(dateIdx.getAll(IDBKeyRange.only(rec.date)));
+      const dup = existing.find(r => r.code === rec.code);
+      if (dup) {
+        Object.assign(dup, rec, { id: dup.id });
+        await requestToPromise(store.put(dup));
+        updated++;
+      } else {
+        await requestToPromise(store.add(rec));
+        added++;
+      }
     }
+  } catch (e) {
+    console.error('[bulkImportBatch] mid-loop error:', e, 'partial added/updated:', added, updated);
+    throw e;
   }
   // 等 transaction 提交
-  await new Promise((resolve, reject) => {
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-    tx.onabort = () => reject(tx.error);
-  });
+  try {
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  } catch (e) {
+    console.error('[bulkImportBatch] tx commit error:', e, 'partial added/updated:', added, updated);
+    throw e;
+  }
   return { added, updated };
 }
 

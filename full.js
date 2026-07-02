@@ -1953,7 +1953,10 @@ document.getElementById('btnNuke')?.addEventListener('click', async () => {
     monthlyDataCache = null;
     await new Promise(r => setTimeout(r, 600));
     await renderMonthlyReport();
-    updateStatus(`全清重建完成：indices=${res.daily?.indexSaved || 0}, sectors=${res.daily?.sectorSaved || 0}, historyImported=${res.historyImported}`);
+    const histAdd = res.histResult?.added ?? '?';
+    const histUpd = res.histResult?.updated ?? '?';
+    const dailyAdd = res.daily?.indexSaved ?? 0;
+    updateStatus(`全清重建完成：历史 added=${histAdd} updated=${histUpd}，今日 indices=${dailyAdd} sectors=${res.daily?.sectorSaved || 0}`);
     toast('全清重建完成');
   } catch (e) {
     console.error(e);
