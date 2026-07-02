@@ -1949,6 +1949,28 @@ document.getElementById('btnReimport')?.addEventListener('click', async () => {
     if (btn) { btn.textContent = '⚙ 重新建库'; btn.disabled = false; }
   }
 });
+document.getElementById('btnNuke')?.addEventListener('click', async () => {
+  if (!confirm('彻底清掉本地数据库并重建？会有几秒延迟，期间别关闭扩展。')) return;
+  const btn = document.getElementById('btnNuke');
+  if (btn) { btn.textContent = '全清中...'; btn.disabled = true; }
+  updateStatus('正在全清数据库...');
+  try {
+    const res = await new Promise(r => chrome.runtime?.sendMessage({ action: 'nukeAndReimport' }, r));
+    console.log('[nuke]', res);
+    if (!res?.success) throw new Error(res?.error || '未知错误');
+    availableMonthsCache = null;
+    monthlyDataCache = null;
+    await new Promise(r => setTimeout(r, 600));
+    await renderMonthlyReport();
+    updateStatus(`全清重建完成：indices=${res.daily?.indexSaved || 0}, sectors=${res.daily?.sectorSaved || 0}, historyImported=${res.historyImported}`);
+    toast('全清重建完成');
+  } catch (e) {
+    console.error(e);
+    updateStatus('全清失败: ' + e.message);
+  } finally {
+    if (btn) { btn.textContent = '☢ 全清重建'; btn.disabled = false; }
+  }
+});
 // 月报控件
 document.getElementById('monthSelect')?.addEventListener('change', () => {
   availableMonthsCache = null; // 允许重新加载当前选择

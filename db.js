@@ -13,6 +13,13 @@ const STORES = {
 
 let dbPromise = null;
 
+export function resetDbConnection() {
+  if (dbPromise) {
+    // 不主动 close，因为 deleteDatabase 后原 promise 还能 resolve
+    dbPromise = null;
+  }
+}
+
 export function openDB() {
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve, reject) => {

@@ -272,13 +272,9 @@ async function collectDailyData(force = false) {
     return { success: false, error: 'no index data' };
   }
 
-  // 写入指数（按 code+date 去重）
+  // 写入指数（按 code+date upsert，今天的指数 always 覆盖，保证 ytd 用最新值）
   let indexSaved = 0;
   for (const idx of indices) {
-    if (!force) {
-      const exists = await hasTodayMarketRecord(idx.market);
-      if (exists) continue;
-    }
     await saveIndexRecord({
       date: today,
       code: idx.code,
@@ -522,6 +518,32 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       await setMeta('historyImported', 0);
       const result = await importHistoryIfNeeded();
       sendResponse({ success: true, result });
+    })();
+    return true;
+  }
+  if (request.action === 'nukeAndReimport') {
+    // 彻底清掉整个 DB 再重建（用于事务残留数据修复）
+    (async () => {
+      try {
+        console.log('[bg] nukeAndReimport: dropping DB');
+        await new Promise((resolve, reject) => {
+          const req = indexedDB.deleteDatabase('etf_index_history');
+          req.onsuccess = () => resolve();
+          req.onerror = () => reject(req.error);
+          req.onblocked = () => resolve(); // 即使被阻塞也继续
+        });
+        // 重置单例
+        const { resetDbConnection } = await import('./db.js');
+        resetDbConnection();
+        // 重新打开 + 导入历史 + 强制今日采集
+        await importHistoryIfNeeded();
+        const daily = await collectDailyData(true);
+        const status = await getMeta('historyImported');
+        sendResponse({ success: true, daily, historyImported: status });
+      } catch (e) {
+        console.error('[bg] nukeAndReimport failed', e);
+        sendResponse({ success: false, error: e.message });
+      }
     })();
     return true;
   }
