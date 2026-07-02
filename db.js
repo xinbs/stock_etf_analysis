@@ -177,7 +177,20 @@ export async function getMeta(key) {
 }
 
 // ===== 批量导入 =====
-export async function bulkImportIndices(records) {
+// 注意：长 transaction 在 IDB 里会被自动 commit/abort（数秒后）。
+// 拆成小批次，每批独立 transaction。
+export async function bulkImportIndices(records, batchSize = 200) {
+  let added = 0, updated = 0;
+  for (let i = 0; i < records.length; i += batchSize) {
+    const batch = records.slice(i, i + batchSize);
+    const result = await bulkImportBatch(batch);
+    added += result.added;
+    updated += result.updated;
+  }
+  return { added, updated };
+}
+
+async function bulkImportBatch(records) {
   const db = await openDB();
   const tx = db.transaction('indices', 'readwrite');
   const store = tx.objectStore('indices');
@@ -195,21 +208,39 @@ export async function bulkImportIndices(records) {
       added++;
     }
   }
+  // 等 transaction 提交
+  await new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
   return { added, updated };
 }
 
 // 清掉 source = 'global_indices_2y_json' 的旧历史记录（v1 → v2 升级用）
-export async function clearHistoryIndices() {
+export async function clearHistoryIndices(batchSize = 200) {
+  // 先一次性取所有记录（readonly tx 不易超时）
   const db = await openDB();
-  const tx = db.transaction('indices', 'readwrite');
-  const store = tx.objectStore('indices');
-  const all = await requestToPromise(store.getAll());
+  const ro = db.transaction('indices', 'readonly');
+  const all = await requestToPromise(ro.objectStore('indices').getAll());
+  const toDelete = all.filter(r => r.source === 'global_indices_2y_json');
+  if (toDelete.length === 0) return 0;
+
   let cleared = 0;
-  for (const r of all) {
-    if (r.source === 'global_indices_2y_json') {
+  // 分批 delete，每个 batch 独立 readwrite tx
+  for (let i = 0; i < toDelete.length; i += batchSize) {
+    const batch = toDelete.slice(i, i + batchSize);
+    const tx = db.transaction('indices', 'readwrite');
+    const store = tx.objectStore('indices');
+    for (const r of batch) {
       await requestToPromise(store.delete(r.id));
       cleared++;
     }
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
   }
   return cleared;
 }

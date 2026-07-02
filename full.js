@@ -980,9 +980,9 @@ function aggregateMonthlyIndices(records) {
 async function renderMonthlyReport() {
   try {
     updateStatus('正在加载月报...');
+    // 1) 同步：拉月份下拉 → 立刻让 UI 可交互
     if (!availableMonthsCache) availableMonthsCache = await loadAvailableMonths();
 
-    // 初始化/同步月份下拉
     const monthSelect = document.getElementById('monthSelect');
     if (monthSelect) {
       const currentVal = monthSelect.value;
@@ -1006,12 +1006,19 @@ async function renderMonthlyReport() {
         monthSelect.value = availableMonthsCache[availableMonthsCache.length - 1];
       }
     }
-
     const yearMonth = monthSelect?.value || fmtYearMonth(new Date());
-    const rawSectorRecords = await loadMonthlySectors(yearMonth);
+    updateStatus(`${yearMonth} 加载板块...`);
+
+    // 2) 并行：拉板块当月数据 + 板块/指数近6月走势
+    const [rawSectorRecords, trendData, indexRangeData, sectorRangeData] = await Promise.all([
+      loadMonthlySectors(yearMonth),
+      loadSectorTrendData(yearMonth),
+      loadIndexRangeByMonths(getPrevMonths(yearMonth, 6)),
+      loadSectorRangeByMonths(getPrevMonths(yearMonth, 6)),
+    ]);
     monthlyDataCache = aggregateMonthlySectors(rawSectorRecords);
 
-    // 板块过滤器（即便当月没数据也要给个过滤器，sector 列表从今天缓存里取）
+    // 板块过滤器
     const sectorFilter = document.getElementById('sectorFilter');
     if (sectorFilter) {
       const currentFilter = sectorFilter.value;
@@ -1030,7 +1037,7 @@ async function renderMonthlyReport() {
       ? monthlyDataCache.filter(s => s.sector === sectorFilter.value)
       : monthlyDataCache;
 
-    // 板块相关图：当月没数据时显示空图占位
+    // 3) 渲染：4 张图
     if (filtered.length > 0) {
       renderMonthlySectorChart(filtered);
       renderBestWorstChart(filtered);
@@ -1038,9 +1045,8 @@ async function renderMonthlyReport() {
       renderEmptyChart('monthlySectorChart', `${yearMonth} 当月无板块数据（采集从今天开始）`);
       renderEmptyChart('bestWorstChart', `${yearMonth} 当月无板块数据（采集从今天开始）`);
     }
-    // 板块/指数对比图：跨月份都有数据
-    await renderSectorTrendChart(yearMonth);
-    await renderIndexVsSectorChart(yearMonth, filtered);
+    renderSectorTrendChartFromData(trendData);
+    renderIndexVsSectorChartFromData(getPrevMonths(yearMonth, 6), indexRangeData, sectorRangeData);
 
     if (filtered.length > 0) {
       updateStatus(`${yearMonth} 月报 · ${filtered.length} 个板块`);
@@ -1070,6 +1076,175 @@ function renderEmptyChart(id, text) {
     sectorTrendChart.clear();
     sectorTrendChart.setOption({ title: { text, left: 'center', top: 'center', textStyle: { color: '#8b949e', fontSize: 14 } } });
   }
+}
+
+// 同 renderSectorTrendChart 但接受预加载的数据，避免再发一次消息
+function renderSectorTrendChartFromData({ months, data: all }) {
+  const el = document.getElementById('sectorTrendChart');
+  if (!el) return;
+  if (!sectorTrendChart) sectorTrendChart = echarts.init(el);
+  const sectorSet = new Set();
+  for (const ym of months) {
+    (all[ym] || []).forEach(s => sectorSet.add(s.sector));
+  }
+  const sectors = Array.from(sectorSet).sort();
+  if (sectors.length === 0) {
+    sectorTrendChart.clear();
+    sectorTrendChart.setOption({
+      title: { text: '板块历史数据从今天开始累（每天收盘后自动采集）', left: 'center', top: 'center', textStyle: { color: '#8b949e', fontSize: 14 } }
+    });
+    return;
+  }
+  const colors = [
+    '#58a6ff', '#7ee787', '#ff7b72', '#d2a8ff', '#ffa657',
+    '#79c0ff', '#56d364', '#f0883e', '#a371f7', '#3fb950'
+  ];
+  const series = sectors.map((sector, idx) => ({
+    name: sector,
+    type: 'line',
+    smooth: true,
+    symbol: 'circle',
+    symbolSize: 6,
+    data: months.map(ym => {
+      const s = (all[ym] || []).find(x => x.sector === sector);
+      return s ? s.avgYtd : null;
+    }),
+    lineStyle: { width: 2 },
+    itemStyle: { color: colors[idx % colors.length] }
+  }));
+  sectorTrendChart.setOption({
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: '#161b22',
+      borderColor: '#30363d',
+      textStyle: { color: '#c9d1d9' },
+      formatter: function(params) {
+        let html = params[0].axisValue + '<br/>';
+        for (const p of params) {
+          if (p.value === null || p.value === undefined) continue;
+          const sign = p.value >= 0 ? '+' : '';
+          html += `<span style="color:${p.color}">●</span> ${p.seriesName}: ${sign}${p.value.toFixed(2)}%<br/>`;
+        }
+        return html;
+      }
+    },
+    legend: {
+      type: 'scroll',
+      top: 0,
+      textStyle: { color: '#8b949e', fontSize: 10 },
+      pageIconColor: '#c9d1d9',
+      pageTextStyle: { color: '#c9d1d9' }
+    },
+    grid: { left: '10%', right: '6%', top: '18%', bottom: '10%' },
+    xAxis: {
+      type: 'category',
+      data: months,
+      axisLabel: { color: '#8b949e', fontSize: 11 },
+      axisLine: { lineStyle: { color: '#30363d' } }
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: { color: '#8b949e', fontSize: 11, formatter: '{value}%' },
+      splitLine: { lineStyle: { color: '#30363d', type: 'dashed' } },
+      axisLine: { lineStyle: { color: '#30363d' } }
+    },
+    series,
+    animationDuration: 600
+  }, true);
+}
+
+// 同 renderIndexVsSectorChart 但接受预加载的数据
+function renderIndexVsSectorChartFromData(months, indexSeries, sectorSeries) {
+  const textColor = '#c9d1d9';
+  const gridColor = '#30363d';
+  const el = document.getElementById('indexVsSectorChart');
+  if (!el) return;
+  if (!indexVsSectorChart) indexVsSectorChart = echarts.init(el);
+
+  const sectorAvgPerMonth = months.map(ym => {
+    const arr = sectorSeries[ym] || [];
+    if (arr.length === 0) return null;
+    return +(arr.reduce((a, b) => a + b.avgDaily, 0) / arr.length).toFixed(2);
+  });
+
+  const series = [];
+  const markets = ['A股', '港股', '美股', '日韩'];
+  const marketColors = { 'A股': '#58a6ff', '港股': '#7ee787', '美股': '#ff7b72', '日韩': '#d2a8ff' };
+  for (const m of markets) {
+    const data = months.map(ym => {
+      const arr = (indexSeries[ym] || []).filter(r => r.market === m);
+      if (arr.length === 0) return null;
+      return +(arr.reduce((a, b) => a + (b.changePct || 0), 0) / arr.length).toFixed(2);
+    });
+    if (data.every(v => v === null)) continue;
+    series.push({
+      name: m,
+      type: 'line',
+      smooth: true,
+      symbol: 'circle',
+      symbolSize: 6,
+      data,
+      lineStyle: { width: 2 },
+      itemStyle: { color: marketColors[m] }
+    });
+  }
+  if (sectorAvgPerMonth.some(v => v !== null)) {
+    series.push({
+      name: '板块平均',
+      type: 'line',
+      smooth: true,
+      symbol: 'diamond',
+      symbolSize: 8,
+      data: sectorAvgPerMonth,
+      lineStyle: { width: 3, type: 'dashed' },
+      itemStyle: { color: '#ffa657' }
+    });
+  }
+  if (series.length === 0) {
+    indexVsSectorChart.clear();
+    indexVsSectorChart.setOption({
+      title: { text: `无指数/板块数据`, left: 'center', top: 'center', textStyle: { color: '#8b949e', fontSize: 14 } }
+    });
+    return;
+  }
+  indexVsSectorChart.setOption({
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: '#161b22',
+      borderColor: '#30363d',
+      textStyle: { color: textColor },
+      formatter: function(params) {
+        let html = params[0].axisValue + '<br/>';
+        for (const p of params) {
+          if (p.value === null || p.value === undefined) continue;
+          const sign = p.value >= 0 ? '+' : '';
+          html += `<span style="color:${p.color}">●</span> ${p.seriesName}: ${sign}${p.value.toFixed(2)}%<br/>`;
+        }
+        return html;
+      }
+    },
+    legend: {
+      top: 0,
+      textStyle: { color: '#8b949e', fontSize: 11 }
+    },
+    grid: { left: '8%', right: '6%', top: '14%', bottom: '12%' },
+    xAxis: {
+      type: 'category',
+      data: months,
+      axisLabel: { color: '#8b949e', fontSize: 11 },
+      axisLine: { lineStyle: { color: '#30363d' } }
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: { color: '#8b949e', fontSize: 11, formatter: '{value}%' },
+      splitLine: { lineStyle: { color: '#30363d', type: 'dashed' } },
+      axisLine: { lineStyle: { color: '#30363d' } }
+    },
+    series,
+    animationDuration: 600
+  }, true);
 }
 
 function renderMonthlySectorChart(sectors) {
