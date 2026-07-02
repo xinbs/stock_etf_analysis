@@ -86,6 +86,7 @@
     .index-chart-box { height: 320px; margin-top: 8px; }
     .index-tab-panel { display: none; }
     .index-tab-panel.active { display: block; }
+  </style>
 </head>
 <body>
   <h1>ETF 板块大盘分析器（猪肉群专用）</h1>
@@ -100,27 +101,66 @@
   </div>
 
   <div class="card index-section" id="indexSection" style="display:none">
-    <h2>🌍 全球指数监控</h2>
     <div class="index-tabs">
-      <span class="index-tab active" data-tab="cards">卡片视图</span>
-      <span class="index-tab" data-tab="chart">图表排名</span>
+      <span class="index-tab active" data-tab="cards">🌍 全球指数</span>
+      <span class="index-tab" data-tab="chart">📊 指数排名</span>
+      <span class="index-tab" data-tab="sector">📈 板块涨跌</span>
+      <span class="index-tab" data-tab="monthly">📅 月报</span>
     </div>
     <div class="index-tab-panel active" id="tab-cards">
       <div id="indexCards"></div>
     </div>
     <div class="index-tab-panel" id="tab-chart">
-      <div id="indexChartBox" class="index-chart-box"></div>
+      <div style="margin-bottom:14px">
+        <h2 style="font-size:13px;color:#e6edf3;margin-bottom:6px">指数涨跌排名（当日）</h2>
+        <div id="indexChartBox" class="index-chart-box" style="height:280px"></div>
+      </div>
+      <div>
+        <h2 style="font-size:13px;color:#e6edf3;margin-bottom:6px">指数涨跌排名（今年）</h2>
+        <div id="indexYtdChart" class="chart-box" style="height:280px"></div>
+      </div>
     </div>
-  </div>
+    <div class="index-tab-panel" id="tab-sector">
+      <div class="grid" style="margin-bottom:0">
+        <div>
+          <h2 style="font-size:14px;color:#e6edf3;margin-bottom:8px">板块当日涨跌排名</h2>
+          <div id="dailyChart" class="chart-box"></div>
+        </div>
+        <div>
+          <h2 style="font-size:14px;color:#e6edf3;margin-bottom:8px">板块年度涨跌排名</h2>
+          <div id="ytdChart" class="chart-box"></div>
+        </div>
+      </div>
+    </div>
 
-  <div class="grid">
-    <div class="card">
-      <h2>板块当日涨跌排名</h2>
-      <div id="dailyChart" class="chart-box"></div>
-    </div>
-    <div class="card">
-      <h2>板块年度涨跌排名</h2>
-      <div id="ytdChart" class="chart-box"></div>
+    <div class="index-tab-panel" id="tab-monthly">
+      <div class="bar" style="justify-content:flex-start;margin-bottom:12px">
+        <label style="color:#8b949e;font-size:13px;align-self:center">月份：</label>
+        <select id="monthSelect" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 10px;font-size:13px"></select>
+        <label style="color:#8b949e;font-size:13px;align-self:center;margin-left:12px">板块过滤：</label>
+        <select id="sectorFilter" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 10px;font-size:13px"><option value="">全部</option></select>
+        <button class="btn2" id="btnMonthlyRefresh" style="margin-left:auto">刷新月报</button>
+      </div>
+      <div class="grid" style="margin-bottom:14px">
+        <div class="card">
+          <h2>当月板块平均涨跌</h2>
+          <div id="monthlySectorChart" class="chart-box"></div>
+        </div>
+        <div class="card">
+          <h2>当月最佳 / 最差板块</h2>
+          <div id="bestWorstChart" class="chart-box"></div>
+        </div>
+      </div>
+      <div class="grid" style="margin-bottom:0">
+        <div class="card">
+          <h2>近 6 个月板块走势</h2>
+          <div id="sectorTrendChart" class="chart-box"></div>
+        </div>
+        <div class="card">
+          <h2>指数 vs 板块对比</h2>
+          <div id="indexVsSectorChart" class="chart-box"></div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -191,6 +231,8 @@
 
   <div class="toast" id="toast"></div>
 
+  <!-- 把指数历史 JSON 数据通过 script 注入（sandbox 模式下 fetch 自己扩展资源可能被 CSP 拦） -->
+  <script src="global_indices_data.js?v=1"></script>
   <script src="full.js?v=4"></script>
 </body>
 </html>
