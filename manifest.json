@@ -5,9 +5,6 @@
   "description": "基于爱盯盘数据，自动分析ETF板块涨跌情况",
   "permissions": ["activeTab", "storage", "scripting", "alarms"],
   "host_permissions": ["<all_urls>", "chrome-extension://*/*"],
-  "sandbox": {
-    "pages": ["full.html"]
-  },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self'"
   },

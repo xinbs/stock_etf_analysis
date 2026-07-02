@@ -350,7 +350,20 @@ async function importHistoryIfNeeded() {
       const code = codeMap[historyKey];
       const cfg = INDEX_CODES[code];
       if (!code || !cfg || !Array.isArray(obj.records)) continue;
-      for (const r of obj.records) {
+      const recs = obj.records;
+      // 找出每年第一条记录作为该年 YTD 基线
+      const yearStarts = {}; // year -> close
+      for (const r of recs) {
+        const y = r.date.slice(0, 4);
+        if (!(y in yearStarts)) yearStarts[y] = r.close;
+      }
+      for (let i = 0; i < recs.length; i++) {
+        const r = recs[i];
+        const y = r.date.slice(0, 4);
+        const prev = i > 0 ? recs[i - 1] : null;
+        const change = prev ? +(r.close - prev.close).toFixed(4) : null;
+        const changePct = prev ? +(((r.close - prev.close) / prev.close) * 100).toFixed(4) : null;
+        const ytd = yearStarts[y] > 0 ? +(((r.close - yearStarts[y]) / yearStarts[y]) * 100).toFixed(4) : null;
         records.push({
           date: r.date,
           code,
@@ -360,9 +373,9 @@ async function importHistoryIfNeeded() {
           high: r.high,
           low: r.low,
           close: r.close,
-          change: null,
-          changePct: null,
-          ytd: null,
+          change,
+          changePct,
+          ytd,
           source: 'global_indices_2y_json',
           capturedAt: Date.parse(r.date) || Date.now(),
         });
@@ -447,12 +460,35 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       const end = `${request.yearMonth}-${String(lastDay).padStart(2, '0')}`;
       const { getIndicesByDateRange } = await import('./db.js');
       const indices = await getIndicesByDateRange(start, end);
-      // 每个 code 只取最后一天
+      // 每个 code 取该月最后一条
       const latest = {};
       for (const r of indices) {
-        latest[r.code] = r;
+        if (!latest[r.code] || r.date > latest[r.code].date) latest[r.code] = r;
       }
       sendResponse({ success: true, indices: Object.values(latest) });
+    })();
+    return true;
+  }
+  if (request.action === 'reimportHistory') {
+    (async () => {
+      await setMeta('historyImported', false);
+      const result = await importHistoryIfNeeded();
+      sendResponse({ success: true, result });
+    })();
+    return true;
+  }
+  if (request.action === 'recollectDaily') {
+    (async () => {
+      const result = await collectDailyData(true);
+      sendResponse({ success: true, result });
+    })();
+    return true;
+  }
+  if (request.action === 'dbStatus') {
+    (async () => {
+      const months = await getAllAvailableMonths();
+      const imported = await getMeta('historyImported');
+      sendResponse({ success: true, months, historyImported: !!imported });
     })();
     return true;
   }

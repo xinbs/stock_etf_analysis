@@ -991,12 +991,8 @@ async function renderMonthlyReport() {
     const yearMonth = monthSelect?.value || fmtYearMonth(new Date());
     const rawSectorRecords = await loadMonthlySectors(yearMonth);
     monthlyDataCache = aggregateMonthlySectors(rawSectorRecords);
-    if (!monthlyDataCache || monthlyDataCache.length === 0) {
-      updateStatus(`${yearMonth} 暂无板块数据，请明日收盘后再查看`);
-      return;
-    }
 
-    // 板块过滤器
+    // 板块过滤器（即便当月没数据也要给个过滤器，sector 列表从今天缓存里取）
     const sectorFilter = document.getElementById('sectorFilter');
     if (sectorFilter) {
       const currentFilter = sectorFilter.value;
@@ -1015,16 +1011,45 @@ async function renderMonthlyReport() {
       ? monthlyDataCache.filter(s => s.sector === sectorFilter.value)
       : monthlyDataCache;
 
-    // 4 个图
-    renderMonthlySectorChart(filtered);
-    renderBestWorstChart(filtered);
+    // 板块相关图：当月没数据时显示空图占位
+    if (filtered.length > 0) {
+      renderMonthlySectorChart(filtered);
+      renderBestWorstChart(filtered);
+    } else {
+      renderEmptyChart('monthlySectorChart', `${yearMonth} 当月无板块数据（采集从今天开始）`);
+      renderEmptyChart('bestWorstChart', `${yearMonth} 当月无板块数据（采集从今天开始）`);
+    }
+    // 板块/指数对比图：跨月份都有数据
     await renderSectorTrendChart(yearMonth);
     await renderIndexVsSectorChart(yearMonth, filtered);
 
-    updateStatus(`${yearMonth} 月报 · ${filtered.length} 个板块`);
+    if (filtered.length > 0) {
+      updateStatus(`${yearMonth} 月报 · ${filtered.length} 个板块`);
+    } else {
+      updateStatus(`${yearMonth} 月报 · 板块数据从今天开始累，指数历史已可用`);
+    }
   } catch (e) {
     console.error('renderMonthlyReport failed', e);
     updateStatus('月报加载失败: ' + e.message);
+  }
+}
+
+function renderEmptyChart(id, text) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (id === 'monthlySectorChart' && monthlySectorChart) {
+    monthlySectorChart.clear();
+    monthlySectorChart.setOption({ title: { text, left: 'center', top: 'center', textStyle: { color: '#8b949e', fontSize: 14 } } });
+    return;
+  }
+  if (id === 'bestWorstChart' && bestWorstChart) {
+    bestWorstChart.clear();
+    bestWorstChart.setOption({ title: { text, left: 'center', top: 'center', textStyle: { color: '#8b949e', fontSize: 14 } } });
+    return;
+  }
+  if (id === 'sectorTrendChart' && sectorTrendChart) {
+    sectorTrendChart.clear();
+    sectorTrendChart.setOption({ title: { text, left: 'center', top: 'center', textStyle: { color: '#8b949e', fontSize: 14 } } });
   }
 }
 
@@ -1135,18 +1160,25 @@ function renderBestWorstChart(sectors) {
 
 async function renderSectorTrendChart(endYearMonth) {
   const { months, data: all } = await loadSectorTrendData(endYearMonth);
+  const el = document.getElementById('sectorTrendChart');
+  if (!el) return;
+  if (!sectorTrendChart) sectorTrendChart = echarts.init(el);
   const sectorSet = new Set();
   for (const ym of months) {
     (all[ym] || []).forEach(s => sectorSet.add(s.sector));
   }
   const sectors = Array.from(sectorSet).sort();
+  if (sectors.length === 0) {
+    sectorTrendChart.clear();
+    sectorTrendChart.setOption({
+      title: { text: '板块历史数据从今天开始累（每天收盘后自动采集）', left: 'center', top: 'center', textStyle: { color: '#8b949e', fontSize: 14 } }
+    });
+    return;
+  }
   const colors = [
     '#58a6ff', '#7ee787', '#ff7b72', '#d2a8ff', '#ffa657',
     '#79c0ff', '#56d364', '#f0883e', '#a371f7', '#3fb950'
   ];
-  const el = document.getElementById('sectorTrendChart');
-  if (!el) return;
-  if (!sectorTrendChart) sectorTrendChart = echarts.init(el);
   const series = sectors.map((sector, idx) => ({
     name: sector,
     type: 'line',
@@ -1158,7 +1190,8 @@ async function renderSectorTrendChart(endYearMonth) {
       return s ? s.avgYtd : null;
     }),
     lineStyle: { width: 2 },
-    itemStyle: { color: colors[idx % colors.length] }
+    itemStyle: { color: colors[idx % colors.length] },
+    connectNulls: true
   }));
   sectorTrendChart.setOption({
     backgroundColor: 'transparent',
@@ -1214,6 +1247,57 @@ async function renderIndexVsSectorChart(yearMonth, sectors) {
   const indexValues = indices.map(i => i.changePct ?? i.ytd ?? 0);
   const sectorNames = sectors.map(s => s.sector);
   const sectorValues = sectors.map(s => s.avgDaily);
+  const hasSectors = sectorNames.length > 0;
+  const hasIndices = indexNames.length > 0;
+
+  if (!hasIndices && !hasSectors) {
+    indexVsSectorChart.clear();
+    indexVsSectorChart.setOption({
+      title: { text: `${yearMonth} 暂无指数和板块数据`, left: 'center', top: 'center', textStyle: { color: '#8b949e', fontSize: 14 } }
+    });
+    return;
+  }
+
+  // 缺一者时只画有的那组
+  if (!hasSectors) {
+    indexVsSectorChart.setOption({
+      backgroundColor: 'transparent',
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        backgroundColor: '#161b22',
+        borderColor: '#30363d',
+        textStyle: { color: textColor }
+      },
+      title: { text: `${yearMonth} 当月指数月均涨跌（板块数据从今天开始累）`, left: 'center', top: 4, textStyle: { color: '#8b949e', fontSize: 12 } },
+      grid: { left: '8%', right: '6%', top: '14%', bottom: '12%' },
+      xAxis: {
+        type: 'category',
+        data: indexNames,
+        axisLabel: { color: '#8b949e', fontSize: 11, interval: 0, rotate: 30, width: 110, overflow: 'break' },
+        axisLine: { lineStyle: { color: gridColor } }
+      },
+      yAxis: {
+        type: 'value',
+        axisLabel: { color: '#8b949e', fontSize: 11, formatter: '{value}%' },
+        splitLine: { lineStyle: { color: gridColor, type: 'dashed' } },
+        axisLine: { lineStyle: { color: gridColor } }
+      },
+      series: [{
+        name: '指数',
+        type: 'bar',
+        data: indexValues.map(v => ({
+          value: v,
+          itemStyle: { color: v >= 0 ? '#ff7b72' : '#7ee787', borderRadius: 3 }
+        })),
+        label: { show: true, position: 'top', color: textColor, fontSize: 10, formatter: p => `${p.value >= 0 ? '+' : ''}${p.value.toFixed(2)}%` },
+        barWidth: '40%'
+      }],
+      animationDuration: 600
+    }, true);
+    return;
+  }
+
   indexVsSectorChart.setOption({
     backgroundColor: 'transparent',
     tooltip: {
@@ -1629,6 +1713,26 @@ document.getElementById('btnExport').addEventListener('click', exportJson);
 document.getElementById('btnSave').addEventListener('click', saveEdit);
 document.getElementById('btnRestore').addEventListener('click', restore);
 document.getElementById('btnCancel').addEventListener('click', cancelEdit);
+document.getElementById('btnReimport')?.addEventListener('click', async () => {
+  const btn = document.getElementById('btnReimport');
+  if (btn) { btn.textContent = '重建中...'; btn.disabled = true; }
+  updateStatus('正在重建数据库（重新导入历史 + 强制采集今日）...');
+  try {
+    const res = await new Promise(r => chrome.runtime?.sendMessage({ action: 'reimportHistory' }, r));
+    const res2 = await new Promise(r => chrome.runtime?.sendMessage({ action: 'recollectDaily' }, r));
+    console.log('[reimport]', res, res2);
+    availableMonthsCache = null;
+    monthlyDataCache = null;
+    await renderMonthlyReport();
+    updateStatus(`重建完成：导入 ${res?.result?.added || 0} 条指数，今日采集 ${res2?.result?.sectorSaved || 0} 板块`);
+    toast('重建完成');
+  } catch (e) {
+    console.error(e);
+    updateStatus('重建失败: ' + e.message);
+  } finally {
+    if (btn) { btn.textContent = '⚙ 重新建库'; btn.disabled = false; }
+  }
+});
 // 月报控件
 document.getElementById('monthSelect')?.addEventListener('change', () => {
   availableMonthsCache = null; // 允许重新加载当前选择

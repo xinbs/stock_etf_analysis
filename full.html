@@ -98,6 +98,7 @@
     <button class="btn2" id="btnRefresh">刷新数据（腾讯财经）</button>
     <button class="btn" id="btnExport">导出 JSON</button>
     <button class="btn" id="btnAddOpen">➕ 添加 ETF</button>
+    <button class="btn3" id="btnReimport" title="强制重新导入 2 年指数历史并采集今日数据">⚙ 重新建库</button>
   </div>
 
   <div class="card index-section" id="indexSection" style="display:none">
@@ -134,6 +135,9 @@
     </div>
 
     <div class="index-tab-panel" id="tab-monthly">
+      <div class="status-line" id="monthlyHint" style="text-align:left;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px 12px;margin-bottom:10px;color:#8b949e;font-size:12px">
+        提示：板块历史数据从今天开始累（每天收盘后自动采集）。指数历史已通过 2 年历史 JSON 导入，下方"指数 vs 板块对比"在历史月份会显示指数走势。
+      </div>
       <div class="bar" style="justify-content:flex-start;margin-bottom:12px">
         <label style="color:#8b949e;font-size:13px;align-self:center">月份：</label>
         <select id="monthSelect" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 10px;font-size:13px"></select>
