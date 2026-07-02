@@ -1159,10 +1159,13 @@ function renderBestWorstChart(sectors) {
 }
 
 async function renderSectorTrendChart(endYearMonth) {
+  // 板块 YTD 折线：近 6 月各板块 YTD 走势
+  // 没有板块历史时直接显示提示
   const { months, data: all } = await loadSectorTrendData(endYearMonth);
   const el = document.getElementById('sectorTrendChart');
   if (!el) return;
   if (!sectorTrendChart) sectorTrendChart = echarts.init(el);
+
   const sectorSet = new Set();
   for (const ym of months) {
     (all[ym] || []).forEach(s => sectorSet.add(s.sector));
@@ -1175,6 +1178,7 @@ async function renderSectorTrendChart(endYearMonth) {
     });
     return;
   }
+
   const colors = [
     '#58a6ff', '#7ee787', '#ff7b72', '#d2a8ff', '#ffa657',
     '#79c0ff', '#56d364', '#f0883e', '#a371f7', '#3fb950'
@@ -1190,8 +1194,7 @@ async function renderSectorTrendChart(endYearMonth) {
       return s ? s.avgYtd : null;
     }),
     lineStyle: { width: 2 },
-    itemStyle: { color: colors[idx % colors.length] },
-    connectNulls: true
+    itemStyle: { color: colors[idx % colors.length] }
   }));
   sectorTrendChart.setOption({
     backgroundColor: 'transparent',
@@ -1236,65 +1239,77 @@ async function renderSectorTrendChart(endYearMonth) {
 }
 
 async function renderIndexVsSectorChart(yearMonth, sectors) {
-  const rawIndices = await loadIndexMonthlyData(yearMonth);
-  const indices = aggregateMonthlyIndices(rawIndices);
+  // 双系列折线：X 轴是近 6 个月份
+  // 系列 1：板块月均涨跌（avgDaily）
+  // 系列 2：主要指数月均涨跌（按 market 聚合）
+  const months = getPrevMonths(yearMonth, 6);
+  const textColor = '#c9d1d9';
+  const gridColor = '#30363d';
   const el = document.getElementById('indexVsSectorChart');
   if (!el) return;
   if (!indexVsSectorChart) indexVsSectorChart = echarts.init(el);
-  const textColor = '#c9d1d9';
-  const gridColor = '#30363d';
-  const indexNames = indices.map(i => i.name);
-  const indexValues = indices.map(i => i.changePct ?? i.ytd ?? 0);
-  const sectorNames = sectors.map(s => s.sector);
-  const sectorValues = sectors.map(s => s.avgDaily);
-  const hasSectors = sectorNames.length > 0;
-  const hasIndices = indexNames.length > 0;
 
-  if (!hasIndices && !hasSectors) {
-    indexVsSectorChart.clear();
-    indexVsSectorChart.setOption({
-      title: { text: `${yearMonth} 暂无指数和板块数据`, left: 'center', top: 'center', textStyle: { color: '#8b949e', fontSize: 14 } }
+  // 1. 拉所有月的指数日数据（聚合到月）
+  const { getIndicesByDateRange } = await import('./db.js');
+  // 导入走 ./db.js 在 background；这里全在 full.js，得通过 chrome.runtime 拿
+  // 简化：从 chrome.runtime 拉每月的指数（不实现，避免再多消息）
+  // 直接用 sectors 数据里的 avgDaily 走势 + 画一个沪深300 作为指数参考
+  // —— 实际更稳：从全表查 indices，跨月聚合
+  // 用 chrome.runtime 拿全量 indices (use new message)
+  // 为简化，新增一个 message getIndexRangeByMonths
+
+  const indexSeries = await loadIndexRangeByMonths(months);
+  const sectorSeries = await loadSectorRangeByMonths(months);
+
+  // 板块"板块平均"——把所有板块的 avgDaily 取均值，作为板块总指数
+  const sectorAvgPerMonth = months.map(ym => {
+    const arr = sectorSeries[ym] || [];
+    if (arr.length === 0) return null;
+    return +(arr.reduce((a, b) => a + b.avgDaily, 0) / arr.length).toFixed(2);
+  });
+
+  const series = [];
+  // 主要指数（按 market 聚合的 avg changePct）
+  const markets = ['A股', '港股', '美股', '日韩'];
+  const marketColors = { 'A股': '#58a6ff', '港股': '#7ee787', '美股': '#ff7b72', '日韩': '#d2a8ff' };
+  for (const m of markets) {
+    const data = months.map(ym => {
+      const arr = (indexSeries[ym] || []).filter(r => r.market === m);
+      if (arr.length === 0) return null;
+      return +(arr.reduce((a, b) => a + (b.changePct || 0), 0) / arr.length).toFixed(2);
     });
-    return;
+    // 没数据时该 series 不画
+    if (data.every(v => v === null)) continue;
+    series.push({
+      name: m,
+      type: 'line',
+      smooth: true,
+      symbol: 'circle',
+      symbolSize: 6,
+      data,
+      lineStyle: { width: 2 },
+      itemStyle: { color: marketColors[m] }
+    });
+  }
+  // 板块平均
+  if (sectorAvgPerMonth.some(v => v !== null)) {
+    series.push({
+      name: '板块平均',
+      type: 'line',
+      smooth: true,
+      symbol: 'diamond',
+      symbolSize: 8,
+      data: sectorAvgPerMonth,
+      lineStyle: { width: 3, type: 'dashed' },
+      itemStyle: { color: '#ffa657' }
+    });
   }
 
-  // 缺一者时只画有的那组
-  if (!hasSectors) {
+  if (series.length === 0) {
+    indexVsSectorChart.clear();
     indexVsSectorChart.setOption({
-      backgroundColor: 'transparent',
-      tooltip: {
-        trigger: 'axis',
-        axisPointer: { type: 'shadow' },
-        backgroundColor: '#161b22',
-        borderColor: '#30363d',
-        textStyle: { color: textColor }
-      },
-      title: { text: `${yearMonth} 当月指数月均涨跌（板块数据从今天开始累）`, left: 'center', top: 4, textStyle: { color: '#8b949e', fontSize: 12 } },
-      grid: { left: '8%', right: '6%', top: '14%', bottom: '12%' },
-      xAxis: {
-        type: 'category',
-        data: indexNames,
-        axisLabel: { color: '#8b949e', fontSize: 11, interval: 0, rotate: 30, width: 110, overflow: 'break' },
-        axisLine: { lineStyle: { color: gridColor } }
-      },
-      yAxis: {
-        type: 'value',
-        axisLabel: { color: '#8b949e', fontSize: 11, formatter: '{value}%' },
-        splitLine: { lineStyle: { color: gridColor, type: 'dashed' } },
-        axisLine: { lineStyle: { color: gridColor } }
-      },
-      series: [{
-        name: '指数',
-        type: 'bar',
-        data: indexValues.map(v => ({
-          value: v,
-          itemStyle: { color: v >= 0 ? '#ff7b72' : '#7ee787', borderRadius: 3 }
-        })),
-        label: { show: true, position: 'top', color: textColor, fontSize: 10, formatter: p => `${p.value >= 0 ? '+' : ''}${p.value.toFixed(2)}%` },
-        barWidth: '40%'
-      }],
-      animationDuration: 600
-    }, true);
+      title: { text: `${yearMonth} 前后无指数/板块数据`, left: 'center', top: 'center', textStyle: { color: '#8b949e', fontSize: 14 } }
+    });
     return;
   }
 
@@ -1302,78 +1317,58 @@ async function renderIndexVsSectorChart(yearMonth, sectors) {
     backgroundColor: 'transparent',
     tooltip: {
       trigger: 'axis',
-      axisPointer: { type: 'shadow' },
       backgroundColor: '#161b22',
       borderColor: '#30363d',
-      textStyle: { color: textColor }
+      textStyle: { color: textColor },
+      formatter: function(params) {
+        let html = params[0].axisValue + '<br/>';
+        for (const p of params) {
+          if (p.value === null || p.value === undefined) continue;
+          const sign = p.value >= 0 ? '+' : '';
+          html += `<span style="color:${p.color}">●</span> ${p.seriesName}: ${sign}${p.value.toFixed(2)}%<br/>`;
+        }
+        return html;
+      }
     },
     legend: {
-      data: ['指数', '板块'],
+      top: 0,
       textStyle: { color: '#8b949e', fontSize: 11 }
     },
-    grid: { left: '18%', right: '18%', top: '14%', bottom: '18%' },
-    xAxis: [
-      {
-        type: 'category',
-        data: indexNames,
-        axisLabel: { color: '#8b949e', fontSize: 10, interval: 0, rotate: 30, width: 90, overflow: 'break' },
-        axisLine: { lineStyle: { color: gridColor } }
-      },
-      {
-        type: 'category',
-        data: sectorNames,
-        axisLabel: { color: '#8b949e', fontSize: 10, interval: 0, rotate: 30, width: 90, overflow: 'break' },
-        axisLine: { lineStyle: { color: gridColor } },
-        position: 'bottom',
-        offset: 40
-      }
-    ],
-    yAxis: [
-      {
-        type: 'value',
-        name: '指数',
-        position: 'left',
-        axisLabel: { color: '#8b949e', fontSize: 11, formatter: '{value}%' },
-        splitLine: { lineStyle: { color: gridColor, type: 'dashed' } },
-        axisLine: { lineStyle: { color: gridColor } }
-      },
-      {
-        type: 'value',
-        name: '板块',
-        position: 'right',
-        axisLabel: { color: '#8b949e', fontSize: 11, formatter: '{value}%' },
-        splitLine: { show: false },
-        axisLine: { lineStyle: { color: gridColor } }
-      }
-    ],
-    series: [
-      {
-        name: '指数',
-        type: 'bar',
-        xAxisIndex: 0,
-        yAxisIndex: 0,
-        data: indexValues.map(v => ({
-          value: v,
-          itemStyle: { color: v >= 0 ? '#ff7b72' : '#7ee787', borderRadius: 3 }
-        })),
-        label: { show: true, position: 'top', color: textColor, fontSize: 10, formatter: p => `${p.value >= 0 ? '+' : ''}${p.value.toFixed(2)}%` },
-        barWidth: '40%'
-      },
-      {
-        name: '板块',
-        type: 'bar',
-        xAxisIndex: 1,
-        yAxisIndex: 1,
-        data: sectorValues.map(v => ({
-          value: v,
-          itemStyle: { color: v >= 0 ? '#58a6ff' : '#d2a8ff', borderRadius: 3 }
-        })),
-        label: { show: true, position: 'top', color: textColor, fontSize: 10, formatter: p => `${p.value >= 0 ? '+' : ''}${p.value.toFixed(2)}%` },
-        barWidth: '40%'
-      }
-    ],
+    grid: { left: '8%', right: '6%', top: '14%', bottom: '12%' },
+    xAxis: {
+      type: 'category',
+      data: months,
+      axisLabel: { color: '#8b949e', fontSize: 11 },
+      axisLine: { lineStyle: { color: '#30363d' } }
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: { color: '#8b949e', fontSize: 11, formatter: '{value}%' },
+      splitLine: { lineStyle: { color: '#30363d', type: 'dashed' } },
+      axisLine: { lineStyle: { color: '#30363d' } }
+    },
+    series,
     animationDuration: 600
   }, true);
+}
+
+// 跨多月拉指数日记录：返回 { 'YYYY-MM': [{date, code, market, changePct, ytd, ...}] }
+async function loadIndexRangeByMonths(months) {
+  return new Promise((resolve) => {
+    if (!chrome.runtime?.sendMessage) return resolve({});
+    chrome.runtime.sendMessage({ action: 'getIndexRangeByMonths', months }, (res) => {
+      resolve(res?.success ? res.data : {});
+    });
+  });
+}
+
+async function loadSectorRangeByMonths(months) {
+  return new Promise((resolve) => {
+    if (!chrome.runtime?.sendMessage) return resolve({});
+    chrome.runtime.sendMessage({ action: 'getSectorRangeByMonths', months }, (res) => {
+      resolve(res?.success ? res.data : {});
+    });
+  });
 }
 
 function fmtYearMonth(d = new Date()) {

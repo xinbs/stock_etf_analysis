@@ -458,7 +458,36 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'getAvailableMonths') {
     (async () => {
       const months = await getAllAvailableMonths();
-      sendResponse({ success: true, months });
+      // 加上指数历史覆盖的月份（start ~ end 之间的所有月）
+      const { openDB } = await import('./db.js');
+      const db = await openDB();
+      const tx = db.transaction('indices', 'readonly');
+      const store = tx.objectStore('indices');
+      const dateIdx = store.index('date');
+      const all = await new Promise(r => {
+        const req = dateIdx.getAllKeys();
+        req.onsuccess = () => r(req.result);
+        req.onerror = () => r([]);
+      });
+      const monthSet = new Set(months);
+      let minDate = null, maxDate = null;
+      for (const k of all) {
+        if (typeof k === 'string' && /^\d{4}-\d{2}/.test(k)) {
+          if (!minDate || k < minDate) minDate = k;
+          if (!maxDate || k > maxDate) maxDate = k;
+        }
+      }
+      if (minDate && maxDate) {
+        const [sy, sm] = minDate.slice(0, 7).split('-').map(Number);
+        const [ey, em] = maxDate.slice(0, 7).split('-').map(Number);
+        let y = sy, m = sm;
+        while (y < ey || (y === ey && m <= em)) {
+          monthSet.add(`${y}-${String(m).padStart(2, '0')}`);
+          m++;
+          if (m > 12) { m = 1; y++; }
+        }
+      }
+      sendResponse({ success: true, months: Array.from(monthSet).sort() });
     })();
     return true;
   }
@@ -485,6 +514,38 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       await setMeta('historyImported', 0);
       const result = await importHistoryIfNeeded();
       sendResponse({ success: true, result });
+    })();
+    return true;
+  }
+  if (request.action === 'getIndexRangeByMonths') {
+    (async () => {
+      const { getIndicesByDateRange } = await import('./db.js');
+      const data = {};
+      for (const ym of (request.months || [])) {
+        const [y, m] = ym.split('-').map(Number);
+        const lastDay = new Date(y, m, 0).getDate();
+        const start = `${ym}-01`;
+        const end = `${ym}-${String(lastDay).padStart(2, '0')}`;
+        const records = await getIndicesByDateRange(start, end);
+        data[ym] = records;
+      }
+      sendResponse({ success: true, data });
+    })();
+    return true;
+  }
+  if (request.action === 'getSectorRangeByMonths') {
+    (async () => {
+      const { getSectorsByDateRange } = await import('./db.js');
+      const data = {};
+      for (const ym of (request.months || [])) {
+        const [y, m] = ym.split('-').map(Number);
+        const lastDay = new Date(y, m, 0).getDate();
+        const start = `${ym}-01`;
+        const end = `${ym}-${String(lastDay).padStart(2, '0')}`;
+        const records = await getSectorsByDateRange(start, end);
+        data[ym] = records;
+      }
+      sendResponse({ success: true, data });
     })();
     return true;
   }
