@@ -1145,8 +1145,8 @@ async function renderMonthlyReport() {
       for (const etfs of Object.values(etfMonths)) {
         for (const e of etfs) if (e.sector) allSectorSet.add(e.sector);
       }
-      // 当月（实时数据）sector 列表
-      for (const s of todaySectors) allSectorSet.add(s.sector);
+      // monthlyDataCache 已有当月 sector 列表（来自 monthETFs）
+      for (const s of monthlyDataCache) allSectorSet.add(s.sector);
       const allSectors = [...allSectorSet].sort();
       sectorFilter.innerHTML = '<option value="">全部</option>';
       for (const s of allSectors) {
