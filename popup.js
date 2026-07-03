@@ -16,7 +16,7 @@ const ETF_CODES = {
   'sh512690': '酒ETF鹏华', 'sh516010': '游戏ETF国泰',
 };
 
-const DEFAULT_YTD = {
+const DEFAULT_MONTHLY = {
   'sh513310': 133.37, 'sh515050': 73.91, 'sh515880': 69.52, 'sh588200': 61.83,
   'sh512480': 56.9, 'sz159995': 48.96, 'sh562800': 23.98, 'sh515220': 17.41,
   'sh516150': 14.03, 'sh562500': 12.07, 'sh515790': 7.17, 'sh512950': 6.75,
@@ -64,28 +64,43 @@ async function fetchETFData() {
         changePct: parseFloat(fields[32]),
       };
     }
-    // 获取年初收盘价并计算 YTD
-    const year = new Date().getFullYear();
-    const yearStartPromises = Object.keys(ETF_CODES).map(async (key) => {
-      const price = await getYearStartPrice(key, year);
-      return { key, price };
+    // 获取月初开盘价并计算月涨跌
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const monthStart = `${year}-${month}-01`;
+    const today = now.toISOString().split('T')[0];
+    const monthStartPromises = Object.keys(ETF_CODES).map(async (key) => {
+      const prefix = key.startsWith('sh') ? 'sh' : 'sz';
+      const num = key.replace(/^[a-z]+/, '');
+      const klineUrl = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${prefix}${num},day,${monthStart},${today},640,qfq`;
+      try {
+        const resp = await fetch(klineUrl);
+        const data = await resp.json();
+        const stock = data.data?.[`${prefix}${num}`];
+        const days = stock?.qfqday || stock?.day;
+        if (days && days.length > 0) {
+          return { key, open: parseFloat(days[0][1]) };
+        }
+        return { key, open: null };
+      } catch (e) { return { key, open: null }; }
     });
-    const yearStartResults = await Promise.all(yearStartPromises);
+    const monthStartResults = await Promise.all(monthStartPromises);
     const etfs = [];
     for (const key of Object.keys(ETF_CODES)) {
       const current = currentData[key];
-      const yearStart = yearStartResults.find(r => r.key === key);
-      let ytd = DEFAULT_YTD[key] || 0;
-      if (current && yearStart && yearStart.price && yearStart.price > 0) {
-        const calcYtd = ((current.currentPrice - yearStart.price) / yearStart.price * 100);
-        if (!isNaN(calcYtd)) ytd = calcYtd;
+      const ms = monthStartResults.find(r => r.key === key);
+      let monthly = DEFAULT_MONTHLY[key] || 0;
+      if (current && ms?.open && ms.open > 0) {
+        const calcMonthly = ((current.currentPrice - ms.open) / ms.open * 100);
+        if (!isNaN(calcMonthly)) monthly = calcMonthly;
       }
       etfs.push({
         code: current?.code || key.replace(/^[a-z]+/, ''),
         name: ETF_CODES[key],
         sector: classifySector(ETF_CODES[key]),
         daily: current?.changePct || 0,
-        ytd: parseFloat(ytd.toFixed(2)),
+        monthly: parseFloat(monthly.toFixed(2)),
       });
     }
     return etfs;
@@ -137,7 +152,7 @@ function analyzeSectors(data) {
   return Object.entries(map).map(([sector, list]) => ({
     sector, count: list.length,
     avgDaily: +(list.reduce((s, x) => s + x.daily, 0) / list.length).toFixed(2),
-    avgYtd: +(list.reduce((s, x) => s + x.ytd, 0) / list.length).toFixed(2),
+    avgMonthly: +(list.reduce((s, x) => s + x.monthly, 0) / list.length).toFixed(2),
   }));
 }
 
@@ -150,7 +165,7 @@ function badge(v) {
 function renderAll() {
   if (etfData.length === 0) {
     document.getElementById('dailyList').innerHTML = '<div class="msg">暂无数据，点击刷新</div>';
-    document.getElementById('ytdList').innerHTML = '<div class="msg">暂无数据</div>';
+    document.getElementById('monthlyList').innerHTML = '<div class="msg">暂无数据</div>';
     document.getElementById('statsPanel').innerHTML = '<div class="stat"><div class="val" style="color:#8b949e">--</div><div class="lbl">数据</div></div>';
     document.getElementById('statusBar').textContent = '等待获取数据...';
     return;
@@ -162,9 +177,9 @@ function renderAll() {
     <div class="row"><span>${s.sector}</span><span><span class="count">${s.count}只</span>${badge(s.avgDaily)}</span></div>
   `).join('');
 
-  const ytdSorted = [...sectors].sort((a, b) => b.avgYtd - a.avgYtd).slice(0, 5);
-  document.getElementById('ytdList').innerHTML = ytdSorted.map(s => `
-    <div class="row"><span>${s.sector}</span><span><span class="count">${s.count}只</span>${badge(s.avgYtd)}</span></div>
+  const monthlySorted = [...sectors].sort((a, b) => b.avgMonthly - a.avgMonthly).slice(0, 5);
+  document.getElementById('monthlyList').innerHTML = monthlySorted.map(s => `
+    <div class="row"><span>${s.sector}</span><span><span class="count">${s.count}只</span>${badge(s.avgMonthly)}</span></div>
   `).join('');
 
   const up = etfData.filter(e => e.daily > 0).length;

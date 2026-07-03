@@ -401,48 +401,87 @@ async function fetchETFData() {
       if (!match) continue;
       const key = match[1];
       const fields = match[2].split('~');
-      if (fields.length < 35) continue;
+      if (fields.length < 38) continue;
       currentData[key] = {
         code: fields[2],
-        currentPrice: parseFloat(fields[3]),
+        open: parseFloat(fields[5]),
+        high: parseFloat(fields[33]),
+        low: parseFloat(fields[34]),
+        close: parseFloat(fields[3]),
+        prevClose: parseFloat(fields[4]),
+        volume: parseFloat(fields[36]),
         changePct: parseFloat(fields[32]),
       };
     }
-    // YTD：先用 DEFAULT_YTD 实时出图；K 线拉取在后台异步进行，拉到后再覆盖
-    const year = new Date().getFullYear();
+
+    // 月度涨跌：获取当月首条 K 线开盘价
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const monthStart = `${year}-${month}-01`;
+    const today = now.toISOString().split('T')[0];
+    const monthStartPromises = Object.keys(ETF_CODES).map(async (key) => {
+      const prefix = key.startsWith('sh') ? 'sh' : 'sz';
+      const num = key.replace(/^[a-z]+/, '');
+      const klineUrl = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${prefix}${num},day,${monthStart},${today},640,qfq`;
+      try {
+        const resp = await fetch(klineUrl);
+        const data = await resp.json();
+        const stock = data.data?.[`${prefix}${num}`];
+        const days = stock?.qfqday || stock?.day;
+        if (days && days.length > 0) {
+          return { key, open: parseFloat(days[0][1]) };
+        }
+        return { key, open: null };
+      } catch (e) { return { key, open: null }; }
+    });
+    const monthStartResults = await Promise.all(monthStartPromises);
+
     const etfs = [];
+    const todayStr = now.toISOString().split('T')[0];
+    const dailyRecords = {};
+
     for (const key of Object.keys(ETF_CODES)) {
       const current = currentData[key];
-      const ytd = DEFAULT_YTD[key] || 0;
+      const ms = monthStartResults.find(r => r.key === key);
+      let monthly = 0;
+      if (current && ms?.open && ms.open > 0) {
+        monthly = ((current.close - ms.open) / ms.open) * 100;
+      }
       etfs.push({
         code: current?.code || key.replace(/^[a-z]+/, ''),
         name: ETF_CODES[key],
         sector: classifySector(ETF_CODES[key]),
         daily: current?.changePct || 0,
-        ytd: parseFloat(ytd.toFixed(2)),
+        monthly: parseFloat(monthly.toFixed(2)),
+        open: current?.open || 0,
+        high: current?.high || 0,
+        low: current?.low || 0,
+        close: current?.close || 0,
+        volume: current?.volume || 0,
+        prevClose: current?.prevClose || 0,
       });
+      // 存完整日数据
+      if (current) {
+        dailyRecords[key] = {
+          date: todayStr,
+          open: current.open,
+          high: current.high,
+          low: current.low,
+          close: current.close,
+          volume: current.volume,
+          prevClose: current.prevClose,
+        };
+      }
     }
 
-    // 后台异步：拉 K 线覆盖 YTD（不阻塞首屏渲染）
-    getYearStartPricesCached(Object.keys(ETF_CODES), year).then(yearStartMap => {
-      let updated = 0;
-      for (const e of etfs) {
-        const key = Object.keys(ETF_CODES).find(k => ETF_CODES[k] === e.name);
-        if (!key) continue;
-        const current = currentData[key];
-        const start = yearStartMap[key];
-        if (current && start && start > 0) {
-          const calcYtd = ((current.currentPrice - start) / start * 100);
-          if (!isNaN(calcYtd)) {
-            e.ytd = parseFloat(calcYtd.toFixed(2));
-            updated++;
-          }
-        }
-      }
-      if (updated > 0 && typeof onETFYTDUpdated === 'function') {
-        onETFYTDUpdated(etfs);
-      }
-    });
+    // 保存完整日数据到 storage
+    try {
+      const existing = await chrome.storage?.local?.get('etf_daily_records');
+      const allRecords = existing?.etf_daily_records || {};
+      allRecords[todayStr] = dailyRecords;
+      await chrome.storage?.local?.set({ etf_daily_records: allRecords });
+    } catch (e) {}
 
     return etfs;
   } catch (e) { console.error('fetchETFData failed', e); return null; }
@@ -450,51 +489,51 @@ async function fetchETFData() {
 
 // ======================== 默认数据 ========================
 const DEFAULT = [
-  {code:"513310",name:"中韩半导体ETF",daily:0.94,ytd:133.37},
-  {code:"515050",name:"通信ETF华夏",daily:1.93,ytd:73.91},
-  {code:"515880",name:"通信ETF国泰",daily:0.69,ytd:69.52},
-  {code:"588200",name:"科创芯片ETF嘉",daily:1.28,ytd:61.83},
-  {code:"512480",name:"半导体ETF国联",daily:1.91,ytd:56.9},
-  {code:"159995",name:"芯片ETF华夏",daily:1.74,ytd:48.96},
-  {code:"562800",name:"稀有金属ETF嘉",daily:-0.52,ytd:23.98},
-  {code:"515220",name:"煤炭ETF国泰",daily:-1.47,ytd:17.41},
-  {code:"516150",name:"稀土ETF嘉实",daily:-1.0,ytd:14.03},
-  {code:"562500",name:"机器人ETF华夏",daily:0.0,ytd:12.07},
-  {code:"515790",name:"光伏ETF华泰柏",daily:-0.29,ytd:7.17},
-  {code:"512950",name:"央企改革ETF华",daily:0.97,ytd:6.75},
-  {code:"512400",name:"有色金属ETF南",daily:0.29,ytd:6.64},
-  {code:"516160",name:"新能源ETF南方",daily:-0.39,ytd:5.88},
-  {code:"515700",name:"新能源车ETF平",daily:-0.92,ytd:3.36},
-  {code:"516510",name:"云计算ETF易方",daily:-0.24,ytd:0.41},
-  {code:"515080",name:"中证红利ETF招",daily:-0.84,ytd:0.2},
-  {code:"512720",name:"计算机ETF国泰",daily:0.42,ytd:-1.0},
-  {code:"518880",name:"黄金ETF华安",daily:0.17,ytd:-3.62},
-  {code:"516970",name:"基建ETF广发",daily:-0.61,ytd:-3.88},
-  {code:"512670",name:"国防ETF鹏华",daily:1.17,ytd:-4.31},
-  {code:"512800",name:"银行ETF华宝",daily:-0.88,ytd:-4.62},
-  {code:"159996",name:"家电ETF国泰",daily:-0.2,ytd:-6.07},
-  {code:"512660",name:"军工ETF国泰",daily:1.34,ytd:-6.48},
-  {code:"512880",name:"证券ETF国泰",daily:-0.18,ytd:-10.82},
-  {code:"512000",name:"券商ETF华宝",daily:-0.19,ytd:-10.88},
-  {code:"159647",name:"中药ETF鹏华",daily:-1.41,ytd:-13.61},
-  {code:"512170",name:"医疗ETF华宝",daily:-0.34,ytd:-14.12},
-  {code:"515210",name:"钢铁ETF国泰",daily:-1.85,ytd:-15.92},
-  {code:"516820",name:"医疗创新ETF平",daily:-0.66,ytd:-16.07},
-  {code:"512200",name:"房地产ETF南方",daily:-0.95,ytd:-16.81},
-  {code:"512980",name:"传媒ETF广发",daily:-1.8,ytd:-17.84},
-  {code:"515170",name:"食品饮料ETF华",daily:-1.32,ytd:-18.07},
-  {code:"516620",name:"影视ETF国泰",daily:-2.39,ytd:-19.09},
-  {code:"513360",name:"教育ETF博时",daily:-0.69,ytd:-19.96},
-  {code:"515230",name:"软件ETF国泰",daily:-0.97,ytd:-20.54},
-  {code:"512690",name:"酒ETF鹏华",daily:-1.91,ytd:-23.32},
-  {code:"516010",name:"游戏ETF国泰",daily:-1.9,ytd:-27.57},
+  {code:"513310",name:"中韩半导体ETF",daily:0.94,monthly:133.37},
+  {code:"515050",name:"通信ETF华夏",daily:1.93,monthly:73.91},
+  {code:"515880",name:"通信ETF国泰",daily:0.69,monthly:69.52},
+  {code:"588200",name:"科创芯片ETF嘉",daily:1.28,monthly:61.83},
+  {code:"512480",name:"半导体ETF国联",daily:1.91,monthly:56.9},
+  {code:"159995",name:"芯片ETF华夏",daily:1.74,monthly:48.96},
+  {code:"562800",name:"稀有金属ETF嘉",daily:-0.52,monthly:23.98},
+  {code:"515220",name:"煤炭ETF国泰",daily:-1.47,monthly:17.41},
+  {code:"516150",name:"稀土ETF嘉实",daily:-1.0,monthly:14.03},
+  {code:"562500",name:"机器人ETF华夏",daily:0.0,monthly:12.07},
+  {code:"515790",name:"光伏ETF华泰柏",daily:-0.29,monthly:7.17},
+  {code:"512950",name:"央企改革ETF华",daily:0.97,monthly:6.75},
+  {code:"512400",name:"有色金属ETF南",daily:0.29,monthly:6.64},
+  {code:"516160",name:"新能源ETF南方",daily:-0.39,monthly:5.88},
+  {code:"515700",name:"新能源车ETF平",daily:-0.92,monthly:3.36},
+  {code:"516510",name:"云计算ETF易方",daily:-0.24,monthly:0.41},
+  {code:"515080",name:"中证红利ETF招",daily:-0.84,monthly:0.2},
+  {code:"512720",name:"计算机ETF国泰",daily:0.42,monthly:-1.0},
+  {code:"518880",name:"黄金ETF华安",daily:0.17,monthly:-3.62},
+  {code:"516970",name:"基建ETF广发",daily:-0.61,monthly:-3.88},
+  {code:"512670",name:"国防ETF鹏华",daily:1.17,monthly:-4.31},
+  {code:"512800",name:"银行ETF华宝",daily:-0.88,monthly:-4.62},
+  {code:"159996",name:"家电ETF国泰",daily:-0.2,monthly:-6.07},
+  {code:"512660",name:"军工ETF国泰",daily:1.34,monthly:-6.48},
+  {code:"512880",name:"证券ETF国泰",daily:-0.18,monthly:-10.82},
+  {code:"512000",name:"券商ETF华宝",daily:-0.19,monthly:-10.88},
+  {code:"159647",name:"中药ETF鹏华",daily:-1.41,monthly:-13.61},
+  {code:"512170",name:"医疗ETF华宝",daily:-0.34,monthly:-14.12},
+  {code:"515210",name:"钢铁ETF国泰",daily:-1.85,monthly:-15.92},
+  {code:"516820",name:"医疗创新ETF平",daily:-0.66,monthly:-16.07},
+  {code:"512200",name:"房地产ETF南方",daily:-0.95,monthly:-16.81},
+  {code:"512980",name:"传媒ETF广发",daily:-1.8,monthly:-17.84},
+  {code:"515170",name:"食品饮料ETF华",daily:-1.32,monthly:-18.07},
+  {code:"516620",name:"影视ETF国泰",daily:-2.39,monthly:-19.09},
+  {code:"513360",name:"教育ETF博时",daily:-0.69,monthly:-19.96},
+  {code:"515230",name:"软件ETF国泰",daily:-0.97,monthly:-20.54},
+  {code:"512690",name:"酒ETF鹏华",daily:-1.91,monthly:-23.32},
+  {code:"516010",name:"游戏ETF国泰",daily:-1.9,monthly:-27.57},
 ];
 DEFAULT.forEach(e => e.sector = classifySector(e.name));
 
 let data = [...DEFAULT];
 let sortCol = 'daily', sortDir = 'desc';
 let dataSource = '默认';
-let dailyChart = null, ytdChart = null, indexChart = null, indexYtdChart = null;
+let dailyChart = null, monthlyChart = null, indexChart = null, indexYtdChart = null;
 let monthlySectorChart = null, bestWorstChart = null, sectorTrendChart = null, indexVsSectorChart = null;
 let monthlyDataCache = null;
 let availableMonthsCache = null;
@@ -537,7 +576,7 @@ function analyze() {
   return Object.entries(m).map(([s, arr]) => ({
     sector: s, count: arr.length,
     avgDaily: +(arr.reduce((a,b)=>a+b.daily,0)/arr.length).toFixed(2),
-    avgYtd: +(arr.reduce((a,b)=>a+b.ytd,0)/arr.length).toFixed(2),
+    avgMonthly: +(arr.reduce((a,b)=>a+b.monthly,0)/arr.length).toFixed(2),
   }));
 }
 
@@ -551,7 +590,7 @@ function badge(v) {
 function renderCharts() {
   const sectors = analyze();
   const dailySorted = [...sectors].sort((a,b) => a.avgDaily - b.avgDaily);
-  const ytdSorted = [...sectors].sort((a,b) => a.avgYtd - b.avgYtd);
+  const monthlySorted = [...sectors].sort((a,b) => a.avgMonthly - b.avgMonthly);
 
   const upColor = '#ff7b72';
   const downColor = '#7ee787';
@@ -616,23 +655,23 @@ function renderCharts() {
     }]
   }, true);
 
-  // 年度涨跌图
-  if (!ytdChart) ytdChart = echarts.init(document.getElementById('ytdChart'));
-  ytdChart.setOption({
+  // 月涨跌图
+  if (!monthlyChart) monthlyChart = echarts.init(document.getElementById('monthlyChart'));
+  monthlyChart.setOption({
     ...commonOption,
     grid: { left: '22%', right: '22%', top: '3%', bottom: '3%' },
-    yAxis: { ...commonOption.yAxis, data: ytdSorted.map(s => s.sector) },
+    yAxis: { ...commonOption.yAxis, data: monthlySorted.map(s => s.sector) },
     series: [{
-      name: '年度涨跌',
+      name: '月涨跌',
       type: 'bar',
-      data: ytdSorted.map(s => ({
-        value: s.avgYtd,
-        itemStyle: { color: s.avgYtd >= 0 ? upColor : downColor, borderRadius: 3 }
+      data: monthlySorted.map(s => ({
+        value: s.avgMonthly,
+        itemStyle: { color: s.avgMonthly >= 0 ? upColor : downColor, borderRadius: 3 }
       })),
       label: {
         show: true, position: 'right', color: textColor, fontSize: 11, fontWeight: 'bold',
         formatter: function(p) {
-          const s = ytdSorted[p.dataIndex];
+          const s = monthlySorted[p.dataIndex];
           return (p.value >= 0 ? '+' : '') + p.value + '%  (' + s.count + '只)';
         }
       },
@@ -650,7 +689,7 @@ function renderTable() {
   });
   document.getElementById('tbody').innerHTML = sorted.map((e, idx) => `
     <tr><td>${e.name}</td><td><span class="code">${e.code}</span></td>
-    <td><span class="tag">${e.sector}</span></td><td>${badge(e.daily)}</td><td>${badge(e.ytd)}</td>
+    <td><span class="tag">${e.sector}</span></td><td>${badge(e.daily)}</td><td>${badge(e.monthly)}</td>
     <td><button class="del-btn" data-code="${e.code}">删除</button></td></tr>
   `).join('');
 
@@ -662,7 +701,7 @@ function renderTable() {
     });
   });
 
-  ['name','code','sector','daily','ytd'].forEach(c => {
+  ['name','code','sector','daily','monthly'].forEach(c => {
     const el = document.getElementById('th-'+c)?.querySelector('span');
     if (el) el.className = 'arrow';
   });
@@ -675,13 +714,13 @@ function renderStats() {
   const down = data.filter(e => e.daily < 0).length;
   const flat = data.length - up - down;
   const avgD = (data.reduce((a,b) => a+b.daily, 0) / data.length).toFixed(2);
-  const avgY = (data.reduce((a,b) => a+b.ytd, 0) / data.length).toFixed(2);
+  const avgM = (data.reduce((a,b) => a+b.monthly, 0) / data.length).toFixed(2);
   document.getElementById('statsPanel').innerHTML = `
     <div class="stat"><div class="val" style="color:#ff7b72">${up}</div><div class="lbl">上涨</div></div>
     <div class="stat"><div class="val" style="color:#7ee787">${down}</div><div class="lbl">下跌</div></div>
     <div class="stat"><div class="val" style="color:#8b949e">${flat}</div><div class="lbl">平盘</div></div>
     <div class="stat"><div class="val" style="color:#58a6ff">${avgD}%</div><div class="lbl">平均涨跌</div></div>
-    <div class="stat"><div class="val" style="color:#d2a8ff">${avgY}%</div><div class="lbl">平均年度</div></div>
+    <div class="stat"><div class="val" style="color:#d2a8ff">${avgM}%</div><div class="lbl">平均月涨跌</div></div>
     <div class="stat"><div class="val" style="color:#e6edf3">${data.length}</div><div class="lbl">ETF总数</div></div>
   `;
 }
@@ -1964,7 +2003,7 @@ document.addEventListener('keydown', (e) => {
 // 窗口大小变化时重绘图表
 window.addEventListener('resize', () => {
   dailyChart?.resize();
-  ytdChart?.resize();
+  monthlyChart?.resize();
   indexChart?.resize();
   indexYtdChart?.resize();
   monthlySectorChart?.resize();
@@ -2060,11 +2099,11 @@ document.querySelectorAll('.index-tab').forEach(tab => {
       renderMonthlyReport();
     } else if (targetTab === 'sector') {
       // 首次切到板块 tab 时图表可能未初始化，触发一次渲染
-      if (!dailyChart || !ytdChart) {
+      if (!dailyChart || !monthlyChart) {
         renderCharts();
       } else {
         dailyChart.resize();
-        ytdChart.resize();
+        monthlyChart.resize();
       }
     }
   });
@@ -2202,4 +2241,4 @@ document.getElementById('th-name').addEventListener('click', () => sort('name'))
 document.getElementById('th-code').addEventListener('click', () => sort('code'));
 document.getElementById('th-sector').addEventListener('click', () => sort('sector'));
 document.getElementById('th-daily').addEventListener('click', () => sort('daily'));
-document.getElementById('th-ytd').addEventListener('click', () => sort('ytd'));
+document.getElementById('th-monthly').addEventListener('click', () => sort('monthly'));
