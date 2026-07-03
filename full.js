@@ -1909,6 +1909,20 @@ async function diagnoseDb() {
       : '诊断失败: ' + (res?.error || 'no resp');
     updateStatus(msg);
     toast(msg);
+
+    // 额外诊断：探测 7 月 etf records（通信）
+    const probe = await new Promise(r => {
+      if (!chrome.runtime?.sendMessage) return r(null);
+      chrome.runtime.sendMessage({ action: 'probeMonthETFs', yearMonth: '2026-07' }, r);
+    });
+    if (probe?.success) {
+      const tongxin = Object.entries(probe.codeFirstLast)
+        .filter(([code, v]) => v.sector === '通信')
+        .map(([code, v]) => `${code}(${v.name}): ${v.firstDate}=${v.firstClose} → ${v.lastDate}=${v.lastClose}`);
+      console.log('[diagnose:通信 etf]', tongxin);
+      console.log('[diagnose:7月所有 dates]', probe.uniqueDates);
+      console.log('[diagnose:total records]', probe.totalRecords);
+    }
   } catch (e) {
     console.error('[diagnose] failed', e);
     updateStatus('诊断失败: ' + e.message);
