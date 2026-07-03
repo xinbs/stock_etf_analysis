@@ -251,6 +251,86 @@ async function fetchETFData() {
   }
 }
 
+// 拉今天每个 ETF 的 K 线，enrich open/high/low/volume + 校验 close
+// 限流 6 并发。返回 map: code -> {open, high, low, close, volume, prevClose, changePct}
+async function fetchTodayKLines(codes) {
+  const today = new Date();
+  const yyyy = today.getFullYear();
+  const mm = String(today.getMonth() + 1).padStart(2, '0');
+  const dd = String(today.getDate()).padStart(2, '0');
+  // 拉今天 + 昨天（用于算 daily changePct 校准）
+  const todayStr = `${yyyy}-${mm}-${dd}`;
+  const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+  const ys = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
+  // endDate 包含今天（不 exclusive）
+  const startDate = ys;
+  const endDate = todayStr;
+
+  const out = {};
+  let i = 0;
+  async function worker() {
+    while (i < codes.length) {
+      const idx = i++;
+      const code = codes[idx];
+      const prefix = code.startsWith('sh') ? 'sh' : 'sz';
+      const num = code.replace(/^[a-z]+/, '');
+      const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${prefix}${num},day,${startDate},${endDate},5,qfq`;
+      try {
+        const r = await fetch(url);
+        const d = await r.json();
+        const stockData = d.data?.[`${prefix}${num}`];
+        if (!stockData) continue;
+        const klines = stockData.qfqday || stockData.day || [];
+        // 找今天的 K 线
+        const todayK = klines.find(k => k[0] === todayStr);
+        const prevK = klines.find(k => k[0] === ys);
+        if (todayK) {
+          const [dateStr, open, close, high, low, volume] = todayK;
+          const prevClose = prevK ? parseFloat(prevK[2]) : null;
+          out[code] = {
+            date: todayStr,
+            open: parseFloat(open),
+            close: parseFloat(close),
+            high: parseFloat(high),
+            low: parseFloat(low),
+            volume: parseFloat(volume) || 0,
+            prevClose,
+            source: 'tencent_qq_kline_today',
+          };
+        }
+      } catch (e) { /* 单个 ETF 失败不影响其他 */ }
+    }
+  }
+  await Promise.all(Array.from({ length: 6 }, worker));
+  return out;
+}
+
+// 给 etfs 数组 enrich K 线 open/high/low/volume
+async function enrichETFsWithKLine(etfs) {
+  const codes = etfs.map(e => e.code && e.code.length === 6 ? (e.code.startsWith('s') ? '' : '') + e.code : null).filter(Boolean);
+  // code 是 6 位数字，需要加前缀。但 ETF_CODES 用 'sh513310' 这种 key
+  // 改：直接用 ETF_CODES 里的 key
+  const keys = Object.keys(ETF_CODES);
+  const klineMap = await fetchTodayKLines(keys);
+  for (const e of etfs) {
+    const key = Object.keys(ETF_CODES).find(k => ETF_CODES[k] === e.name);
+    if (!key) continue;
+    const k = klineMap[key];
+    if (!k) continue;
+    e.open = k.open;
+    e.high = k.high;
+    e.low = k.low;
+    e.volume = k.volume;
+    e.prevClose = k.prevClose;
+    // 用 K 线校准 close
+    if (typeof k.close === 'number' && k.close > 0) {
+      e.close = k.close;
+      e.currentPrice = k.close;
+    }
+  }
+  return etfs;
+}
+
 // ===== 板块聚合 =====
 function aggregateSectors(etfs) {
   const m = {};
@@ -302,13 +382,20 @@ async function collectDailyData(force = false) {
   // 写入 ETF 明细 + 板块聚合
   let etfSaved = 0, sectorSaved = 0;
   if (etfs && etfs.length > 0) {
+    // 用 K 线 enrich 每个 ETF（open/high/low/volume/prevClose，校准 close）
+    await enrichETFsWithKLine(etfs);
     for (const e of etfs) {
       await saveETFRecord({
         date: today,
         code: e.code,
         name: e.name,
         sector: e.sector,
+        open: e.open ?? null,
+        high: e.high ?? null,
+        low: e.low ?? null,
         close: e.currentPrice,
+        volume: e.volume ?? null,
+        prevClose: e.prevClose ?? null,
         daily: e.daily,
         ytd: e.ytd,
         capturedAt,
@@ -625,16 +712,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const start = `${request.yearMonth}-01`;
         const end = `${request.yearMonth}-${String(lastDay).padStart(2, '0')}`;
         const records = await getETFsByDateRange(start, end);
-        // 返回所有日期和每个 code 在该月第一天 / 最后一天的 close
+        // 返回所有日期和每个 code 在该月第一天 / 最后一天的 open + close
         const dates = [...new Set(records.map(r => r.date))].sort();
         const codeFirstLast = {};
         for (const r of records) {
           if (!codeFirstLast[r.code]) {
-            codeFirstLast[r.code] = { name: r.name, sector: r.sector, firstDate: r.date, firstClose: r.close, lastDate: r.date, lastClose: r.close };
+            codeFirstLast[r.code] = {
+              name: r.name, sector: r.sector,
+              firstDate: r.date, firstOpen: r.open, firstClose: r.close,
+              lastDate: r.date, lastOpen: r.open, lastClose: r.close,
+            };
           } else {
             const v = codeFirstLast[r.code];
-            if (r.date < v.firstDate) { v.firstDate = r.date; v.firstClose = r.close; }
-            if (r.date > v.lastDate) { v.lastDate = r.date; v.lastClose = r.close; }
+            if (r.date < v.firstDate) { v.firstDate = r.date; v.firstOpen = r.open; v.firstClose = r.close; }
+            if (r.date > v.lastDate) { v.lastDate = r.date; v.lastOpen = r.open; v.lastClose = r.close; }
           }
         }
         sendResponse({

@@ -1011,26 +1011,49 @@ function aggregateMonthlySectors(records) {
 // 从单月 ETF records 算 sector 月累计涨跌（月初首日 close → 月末最后一日 close，复利）
 // tradingDays: 该月有数据的交易日数（用于判断是否完整月）
 function aggregateETFsToMonthlySectors(etfRecords) {
-  // etfRecords: [{date, code, sector, close, name, ...}]
-  // 算法：每个 ETF 取月初首日 close → 月末最后一日 close（也就是最近一天），复利累计
-  // 历史月：lastDate = 月末最后交易日
-  // 当月：lastDate = 今天（7 月还没结束，"末"就是今天）
-  // 无论完整或不完整月，算法都一样：firstClose → lastClose 复利
+  // etfRecords: [{date, code, sector, open, high, low, close, volume, ...}]
+  // 算法：月首日 open（不是 close） → 月末最后一日 close，复利累计
+  // 当月：月首日 open → 今天 close
+  // 历史月：月首日 open → 月最后交易日 close
+  // 若月首日 open 缺失（etfs store 老数据），fallback 用 firstClose
   const codeMap = new Map();
   for (const r of etfRecords) {
     if (!codeMap.has(r.code)) {
-      codeMap.set(r.code, { sector: r.sector, name: r.name, firstDate: r.date, firstClose: r.close, lastDate: r.date, lastClose: r.close });
+      codeMap.set(r.code, {
+        sector: r.sector, name: r.name,
+        firstDate: r.date, firstOpen: r.open ?? null, firstClose: r.close,
+        lastDate: r.date, lastOpen: r.open ?? null, lastClose: r.close,
+      });
     } else {
       const v = codeMap.get(r.code);
-      if (r.date < v.firstDate) { v.firstDate = r.date; v.firstClose = r.close; }
-      if (r.date > v.lastDate) { v.lastDate = r.date; v.lastClose = r.close; }
+      if (r.date < v.firstDate) {
+        v.firstDate = r.date;
+        v.firstOpen = r.open ?? null;
+        v.firstClose = r.close;
+      }
+      if (r.date > v.lastDate) {
+        v.lastDate = r.date;
+        v.lastOpen = r.open ?? null;
+        v.lastClose = r.close;
+      }
     }
   }
   const secMap = new Map();
+  let openCount = 0, fallbackCount = 0;
   for (const [code, info] of codeMap) {
     if (info.firstClose <= 0) continue;
-    // 月累计涨跌：firstDate 收盘 → lastDate 收盘（包含今日）
-    const monthChange = ((info.lastClose - info.firstClose) / info.firstClose) * 100;
+    // 用 open，没有就 fallback close
+    let firstPrice;
+    if (typeof info.firstOpen === 'number' && info.firstOpen > 0) {
+      firstPrice = info.firstOpen;
+      openCount++;
+    } else {
+      firstPrice = info.firstClose;
+      fallbackCount++;
+    }
+    const lastPrice = info.lastClose;
+    // 月累计涨跌：月首日 open → 月末 lastClose（复利）
+    const monthChange = ((lastPrice - firstPrice) / firstPrice) * 100;
     if (!secMap.has(info.sector)) {
       secMap.set(info.sector, { sector: info.sector, count: 0, sumMonthChange: 0, etfs: [] });
     }
@@ -1039,6 +1062,7 @@ function aggregateETFsToMonthlySectors(etfRecords) {
     sec.sumMonthChange += monthChange;
     sec.etfs.push(code);
   }
+  console.log(`[aggregateETFs] open=${openCount} fallbackClose=${fallbackCount}`);
   return Array.from(secMap.values()).map(s => ({
     sector: s.sector,
     count: s.count,
