@@ -895,11 +895,43 @@ async function loadAvailableMonths() {
   });
 }
 
+// 从 ETF records 计算所有覆盖的月份（前端推断，避免 background 再写一个 handler）
+async function inferMonthsFromETFs() {
+  // 用 etfsMonths 拉一个最长范围覆盖（2026-01-01 ~ 2026-12-31）耗时，所以直接推断：默认返回 1-12 月 + 已知月份
+  const months = new Set();
+  const now = new Date();
+  const thisMonth = fmtYearMonth(now);
+  months.add(thisMonth);
+  // 推断 1-12 月（用户补完后会存在）
+  for (let m = 1; m <= 12; m++) {
+    months.add(`${now.getFullYear()}-${String(m).padStart(2, '0')}`);
+  }
+  return Array.from(months).sort();
+}
+
 async function loadMonthlySectors(yearMonth) {
   return new Promise((resolve) => {
     if (!chrome.runtime?.sendMessage) return resolve([]);
     chrome.runtime.sendMessage({ action: 'getMonthlySectors', yearMonth }, (res) => {
       resolve(res?.success ? res.sectors : []);
+    });
+  });
+}
+
+async function loadMonthETFs(yearMonth) {
+  return new Promise((resolve) => {
+    if (!chrome.runtime?.sendMessage) return resolve([]);
+    chrome.runtime.sendMessage({ action: 'getMonthETFs', yearMonth }, (res) => {
+      resolve(res?.success ? res.etfs : []);
+    });
+  });
+}
+
+async function loadETFMonths(months) {
+  return new Promise((resolve) => {
+    if (!chrome.runtime?.sendMessage) return resolve({});
+    chrome.runtime.sendMessage({ action: 'getETFMonths', months }, (res) => {
+      resolve(res?.success ? res.data : {});
     });
   });
 }
@@ -940,20 +972,60 @@ async function loadIndexMonthlyData(yearMonth) {
 
 // 把一个月内按 sector 的日记录聚合成一条月记录
 function aggregateMonthlySectors(records) {
+  // records: 该月所有日 sector records
+  // avgDaily = 月内日均涨跌 (sum / n)
+  // avgYtd = 月累计涨跌（这个月累计给其它系统消费的语义）
   const map = {};
   for (const r of records) {
     if (!map[r.sector]) {
-      map[r.sector] = { sector: r.sector, count: r.count, sumDaily: 0, sumYtd: 0, n: 0 };
+      map[r.sector] = { sector: r.sector, count: r.count, sumDaily: 0, n: 0 };
     }
     map[r.sector].sumDaily += r.avgDaily;
-    map[r.sector].sumYtd += r.avgYtd;
     map[r.sector].n += 1;
   }
   return Object.values(map).map(s => ({
     sector: s.sector,
     count: s.count,
     avgDaily: s.n ? +(s.sumDaily / s.n).toFixed(2) : 0,
-    avgYtd: s.n ? +(s.sumYtd / s.n).toFixed(2) : 0,
+    avgYtd: +(s.sumDaily).toFixed(2),
+  }));
+}
+
+// 从单月 ETF records 算 sector 月累计涨跌（月初首日 close → 月末最后一日 close，复利）
+function aggregateETFsToMonthlySectors(etfRecords) {
+  // etfRecords: [{date, code, sector, close, name, ...}]
+  // 第一步：对每个 (code, sector) 找到月初首日 close 和月末最后一日 close
+  const codeMap = new Map(); // code -> {sector, firstDate, firstClose, lastDate, lastClose, name}
+  for (const r of etfRecords) {
+    if (!codeMap.has(r.code)) {
+      codeMap.set(r.code, { sector: r.sector, name: r.name, firstDate: r.date, firstClose: r.close, lastDate: r.date, lastClose: r.close });
+    } else {
+      const v = codeMap.get(r.code);
+      if (r.date < v.firstDate) { v.firstDate = r.date; v.firstClose = r.close; }
+      if (r.date > v.lastDate) { v.lastDate = r.date; v.lastClose = r.close; }
+    }
+  }
+  // 第二步：按 sector 聚合
+  const secMap = new Map();
+  for (const [code, info] of codeMap) {
+    if (info.firstClose <= 0) continue;
+    // 月累计涨跌（复利）
+    const monthChange = ((info.lastClose - info.firstClose) / info.firstClose) * 100;
+    if (!secMap.has(info.sector)) {
+      secMap.set(info.sector, { sector: info.sector, count: 0, sumMonthChange: 0, etfs: [] });
+    }
+    const sec = secMap.get(info.sector);
+    sec.count += 1;
+    sec.sumMonthChange += monthChange;
+    sec.etfs.push(code);
+  }
+  return Array.from(secMap.values()).map(s => ({
+    sector: s.sector,
+    count: s.count,
+    // 月内日均涨跌：这里用月累计涨跌近似
+    avgDaily: +(s.sumMonthChange / s.count).toFixed(2),
+    // 月累计涨跌
+    avgYtd: +(s.sumMonthChange / s.count).toFixed(2),
   }));
 }
 
@@ -1015,14 +1087,28 @@ async function renderMonthlyReport() {
     const yearMonth = monthSelect?.value || fmtYearMonth(new Date());
     updateStatus(`${yearMonth} 加载板块...`);
 
-    // 2) 并行：拉板块当月数据 + 板块/指数近6月走势
-    const [rawSectorRecords, trendData, indexRangeData, sectorRangeData] = await Promise.all([
-      loadMonthlySectors(yearMonth),
-      loadSectorTrendData(yearMonth),
-      loadIndexRangeByMonths(getPrevMonths(yearMonth, 6)),
-      loadSectorRangeByMonths(getPrevMonths(yearMonth, 6)),
+    // 2) 并行：优先拉 ETF 月度 records（更准确，能算出复利累计涨跌）
+    //    同时也拉 sectors range（用于 sector 过滤器全集/趋势图）
+    const prevMonths = getPrevMonths(yearMonth, 6);
+    const [monthETFs, etfMonths, indexRangeData, sectorRangeData] = await Promise.all([
+      loadMonthETFs(yearMonth),
+      loadETFMonths(prevMonths),
+      loadIndexRangeByMonths(prevMonths),
+      loadSectorRangeByMonths(prevMonths),
     ]);
-    monthlyDataCache = aggregateMonthlySectors(rawSectorRecords);
+
+    // 优先用 ETF records 算月度 sector 累计涨跌
+    monthlyDataCache = monthETFs.length > 0
+      ? aggregateETFsToMonthlySectors(monthETFs)
+      : [];
+
+    // 月份下拉需要包含 ETF 历史覆盖的范围
+    // （loadAvailableMonths 内部已经处理了 indices + sectors；ETF 月份需要手动补）
+    if (monthETFs.length > 0 && !availableMonthsCache.includes(yearMonth)) {
+      const monthsSet = new Set(availableMonthsCache);
+      monthsSet.add(yearMonth);
+      availableMonthsCache = Array.from(monthsSet).sort();
+    }
 
     // 把 indexRangeData（日级 records）按月聚合成 {ym: {code: {changePct, ytd, ...}}}
     const aggregatedIndexByMonth = {};
@@ -1030,13 +1116,16 @@ async function renderMonthlyReport() {
       aggregatedIndexByMonth[ym] = aggregateMonthlyIndices(indexRangeData[ym]);
     }
 
-    // 板块过滤器（用 sectorRangeData 6 个月内所有 sector 列表，跨月份都能筛）
+    // 板块过滤器全集（ETF 历史覆盖的 sector 优先，否则用 sectorRangeData）
     const sectorFilter = document.getElementById('sectorFilter');
     if (sectorFilter) {
       const currentFilter = sectorFilter.value;
       const allSectorSet = new Set();
       for (const ym of Object.keys(sectorRangeData)) {
         for (const s of sectorRangeData[ym]) allSectorSet.add(s.sector);
+      }
+      for (const etfs of Object.values(etfMonths)) {
+        for (const e of etfs) if (e.sector) allSectorSet.add(e.sector);
       }
       const allSectors = [...allSectorSet].sort();
       sectorFilter.innerHTML = '<option value="">全部</option>';
@@ -1061,8 +1150,8 @@ async function renderMonthlyReport() {
       renderEmptyChart('monthlySectorChart', `${yearMonth} 当月无板块数据（采集从今天开始）`);
       renderEmptyChart('bestWorstChart', `${yearMonth} 当月无板块数据（采集从今天开始）`);
     }
-    renderSectorTrendChartFromData(trendData, aggregatedIndexByMonth);
-    renderIndexVsSectorChartFromData(getPrevMonths(yearMonth, 6), aggregatedIndexByMonth, sectorRangeData);
+    renderSectorTrendChartFromData(prevMonths, etfMonths);
+    renderIndexVsSectorChartFromData(prevMonths, aggregatedIndexByMonth, etfMonths);
 
     if (filtered.length > 0) {
       updateStatus(`${yearMonth} 月报 · ${filtered.length} 个板块`);
@@ -1094,25 +1183,23 @@ function renderEmptyChart(id, text) {
   }
 }
 
-// 同 renderSectorTrendChart 但接受预加载的数据，避免再发一次消息
-// 改：近 6 月指数 YTD 走势（板块历史从今天开始累，没价值；指数历史已有 2 年）
-function renderSectorTrendChartFromData({ months, data: all }, indexSeries) {
+// 近 6 月板块月累计涨跌走势（每个 sector 一条折线）
+function renderSectorTrendChartFromData(months, etfMonths) {
   const el = document.getElementById('sectorTrendChart');
   if (!el) return;
   if (!sectorTrendChart) sectorTrendChart = echarts.init(el);
 
-  // 按 index code 分组，每个 index 一条线
-  const codeMap = {};
+  // 收集 6 个月所有 sector
+  const sectorSet = new Set();
   for (const ym of months) {
-    for (const r of (indexSeries[ym] || [])) {
-      codeMap[r.code] = r;
-    }
+    const sectors = aggregateETFsToMonthlySectors(etfMonths[ym] || []);
+    sectors.forEach(s => sectorSet.add(s.sector));
   }
-  const codes = Object.keys(codeMap);
-  if (codes.length === 0) {
+  const sectors = Array.from(sectorSet).sort();
+  if (sectors.length === 0) {
     sectorTrendChart.clear();
     sectorTrendChart.setOption({
-      title: { text: '指数历史暂无数据', left: 'center', top: 'center', textStyle: { color: '#8b949e', fontSize: 14 } }
+      title: { text: '板块历史数据从今天开始累（先补 1-6 月 ETF 历史）', left: 'center', top: 'center', textStyle: { color: '#8b949e', fontSize: 13 } }
     });
     return;
   }
@@ -1120,25 +1207,20 @@ function renderSectorTrendChartFromData({ months, data: all }, indexSeries) {
     '#58a6ff', '#7ee787', '#ff7b72', '#d2a8ff', '#ffa657',
     '#79c0ff', '#56d364', '#f0883e', '#a371f7', '#3fb950'
   ];
-  const series = codes.map((code, idx) => {
-    const cfg = codeMap[code];
-    return {
-      name: cfg.name || code,
-      type: 'line',
-      smooth: true,
-      symbol: 'circle',
-      symbolSize: 6,
-      data: months.map(ym => {
-        const rec = (indexSeries[ym] || []).find(r => r.code === code);
-        if (!rec) return null;
-        // 用 rec.ytd —— 历史导入的 ytd 是"6 月初（=yearStart）以来累计涨跌"
-        // 选具体某月时这条线会画出"该月月均的累计涨跌"，反映当月累计走势
-        return typeof rec.ytd === 'number' ? rec.ytd : (typeof rec.changePct === 'number' ? rec.changePct : null);
-      }),
-      lineStyle: { width: 2 },
-      itemStyle: { color: colors[idx % colors.length] }
-    };
-  });
+  const series = sectors.map((sector, idx) => ({
+    name: sector,
+    type: 'line',
+    smooth: true,
+    symbol: 'circle',
+    symbolSize: 6,
+    data: months.map(ym => {
+      const arr = aggregateETFsToMonthlySectors(etfMonths[ym] || []);
+      const sec = arr.find(s => s.sector === sector);
+      return sec ? sec.avgYtd : null;
+    }),
+    lineStyle: { width: 2 },
+    itemStyle: { color: colors[idx % colors.length] }
+  }));
   sectorTrendChart.setOption({
     backgroundColor: 'transparent',
     tooltip: {
@@ -1182,17 +1264,18 @@ function renderSectorTrendChartFromData({ months, data: all }, indexSeries) {
 }
 
 // 同 renderIndexVsSectorChart 但接受预加载的数据
-function renderIndexVsSectorChartFromData(months, indexSeries, sectorSeries) {
+function renderIndexVsSectorChartFromData(months, indexSeries, etfMonths) {
   const textColor = '#c9d1d9';
   const gridColor = '#30363d';
   const el = document.getElementById('indexVsSectorChart');
   if (!el) return;
   if (!indexVsSectorChart) indexVsSectorChart = echarts.init(el);
 
+  // 板块月累计涨跌（用 ETF 月度数据算 sector → 月 avgYtd，复利）
   const sectorAvgPerMonth = months.map(ym => {
-    const arr = sectorSeries[ym] || [];
+    const arr = aggregateETFsToMonthlySectors(etfMonths[ym] || []);
     if (arr.length === 0) return null;
-    return +(arr.reduce((a, b) => a + b.avgDaily, 0) / arr.length).toFixed(2);
+    return +(arr.reduce((a, b) => a + b.avgYtd, 0) / arr.length).toFixed(2);
   });
 
   const series = [];
@@ -1202,8 +1285,8 @@ function renderIndexVsSectorChartFromData(months, indexSeries, sectorSeries) {
     const data = months.map(ym => {
       const arr = (indexSeries[ym] || []).filter(r => r.market === m);
       if (arr.length === 0) return null;
-      // indexSeries[ym] 已是按月聚合（每月每 code 1 条），直接平均
-      return +(arr.reduce((a, b) => a + (b.changePct || 0), 0) / arr.length).toFixed(2);
+      // indexSeries[ym] 已是按月聚合（每月每 code 1 条）
+      return +(arr.reduce((a, b) => a + (b.ytd ?? b.changePct ?? 0), 0) / arr.length).toFixed(2);
     });
     if (data.every(v => v === null)) continue;
     series.push({
@@ -1988,6 +2071,28 @@ document.getElementById('btnAshare')?.addEventListener('click', async () => {
     updateStatus('拉取失败: ' + e.message);
   } finally {
     if (btn) { btn.textContent = '📈 补 A 股 6 月'; btn.disabled = false; }
+  }
+});
+document.getElementById('btnETFHistory')?.addEventListener('click', async () => {
+  if (!confirm('从腾讯 K 线拉 38 个 ETF 1-6 月每日数据，按 sector 写入 IDB（约 30-60 秒，期间别刷新页面）？')) return;
+  const btn = document.getElementById('btnETFHistory');
+  if (btn) { btn.textContent = '拉取中...'; btn.disabled = true; }
+  updateStatus('正在从腾讯 K 线拉 38 个 ETF 1-6 月每日数据...');
+  try {
+    const res = await new Promise(r => chrome.runtime?.sendMessage({ action: 'fetchETFHistory' }, r));
+    console.log('[etfHistory]', res);
+    if (!res?.success) throw new Error(res?.error || '未知错误');
+    availableMonthsCache = null;
+    monthlyDataCache = null;
+    await new Promise(r => setTimeout(r, 400));
+    await renderMonthlyReport();
+    updateStatus(`ETF 1-6 月补完：sectors ${res.totalSectors} 条 (added=${res.added} updated=${res.updated})`);
+    toast('ETF 1-6 月补完');
+  } catch (e) {
+    console.error(e);
+    updateStatus('拉取失败: ' + e.message);
+  } finally {
+    if (btn) { btn.textContent = '📊 补 ETF 1-6 月'; btn.disabled = false; }
   }
 });
 document.getElementById('btnNuke')?.addEventListener('click', async () => {

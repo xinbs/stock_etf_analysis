@@ -4,12 +4,13 @@
 import { ETF_CODES, DEFAULT_YTD, INDEX_CODES, classifySector, fmtDate, fmtYearMonth } from './shared.js';
 import {
   openDB, saveIndexRecord, saveSectorRecord, saveETFRecord,
-  getSectorsByMonth, getAllAvailableMonths, bulkImportIndices,
+  getSectorsByMonth, getAllAvailableMonths, bulkImportIndices, bulkImportSectors, bulkImportETFs,
   getIndexByDate, hasTodayMarketRecord, setMeta, getMeta,
-  clearHistoryIndices, getIndicesByDateRange, getSectorsByDateRange,
+  clearHistoryIndices, getIndicesByDateRange, getSectorsByDateRange, getETFsByDateRange,
   resetDbConnection
 } from './db.js';
 import { fetchAndStoreAJune } from './ashare_history.js';
+import { fetchAndStoreETFHistory } from './etf_history.js';
 
 const COLLECTION_ALARM_NAME = 'dailyCollect';
 const ALARM_PERIOD_MINUTES = 5;
@@ -466,11 +467,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         const months = await getAllAvailableMonths();
         // 加上指数历史覆盖的月份：cursor 遍历 date index 拿真实 date 值
         const db = await openDB();
-        const tx = db.transaction('indices', 'readonly');
-        const dateIdx = tx.objectStore('indices').index('date');
+        const tx = db.transaction(['indices', 'etfs'], 'readonly');
+        const idxDateIdx = tx.objectStore('indices').index('date');
+        const etfDateIdx = tx.objectStore('etfs').index('date');
         const allDates = await new Promise(r => {
           const out = [];
-          const req = dateIdx.openKeyCursor();
+          const req = idxDateIdx.openKeyCursor();
+          req.onsuccess = () => {
+            const cur = req.result;
+            if (cur) { out.push(cur.key); cur.continue(); } else r(out);
+          };
+          req.onerror = () => r([]);
+        });
+        const allEtfDates = await new Promise(r => {
+          const out = [];
+          const req = etfDateIdx.openKeyCursor();
           req.onsuccess = () => {
             const cur = req.result;
             if (cur) { out.push(cur.key); cur.continue(); } else r(out);
@@ -478,22 +489,26 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           req.onerror = () => r([]);
         });
         const monthSet = new Set(months);
-        const dateStrings = allDates.filter(k => typeof k === 'string');
-        let minDate = null, maxDate = null;
-        for (const k of dateStrings) {
-          if (!minDate || k < minDate) minDate = k;
-          if (!maxDate || k > maxDate) maxDate = k;
-        }
-        if (minDate && maxDate) {
-          const [sy, sm] = minDate.slice(0, 7).split('-').map(Number);
-          const [ey, em] = maxDate.slice(0, 7).split('-').map(Number);
-          let y = sy, m = sm;
-          while (y < ey || (y === ey && m <= em)) {
-            monthSet.add(`${y}-${String(m).padStart(2, '0')}`);
-            m++;
-            if (m > 12) { m = 1; y++; }
+        const inferFromDates = (dates) => {
+          const strs = dates.filter(k => typeof k === 'string');
+          let minDate = null, maxDate = null;
+          for (const k of strs) {
+            if (!minDate || k < minDate) minDate = k;
+            if (!maxDate || k > maxDate) maxDate = k;
           }
-        }
+          if (minDate && maxDate) {
+            const [sy, sm] = minDate.slice(0, 7).split('-').map(Number);
+            const [ey, em] = maxDate.slice(0, 7).split('-').map(Number);
+            let y = sy, m = sm;
+            while (y < ey || (y === ey && m <= em)) {
+              monthSet.add(`${y}-${String(m).padStart(2, '0')}`);
+              m++;
+              if (m > 12) { m = 1; y++; }
+            }
+          }
+        };
+        inferFromDates(allDates);
+        inferFromDates(allEtfDates);
         sendResponse({ success: true, months: Array.from(monthSet).sort() });
       } catch (e) {
         console.error('[bg] getAvailableMonths failed', e);
@@ -523,6 +538,44 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     })();
     return true;
   }
+  if (request.action === 'getMonthETFs') {
+    (async () => {
+      try {
+        const [y, m] = request.yearMonth.split('-').map(Number);
+        const lastDay = new Date(y, m, 0).getDate();
+        const start = `${request.yearMonth}-01`;
+        const end = `${request.yearMonth}-${String(lastDay).padStart(2, '0')}`;
+        const records = await getETFsByDateRange(start, end);
+        sendResponse({ success: true, etfs: records });
+      } catch (e) {
+        console.error('[bg] getMonthETFs failed', e);
+        sendResponse({ success: false, error: e.message, etfs: [] });
+      }
+    })();
+    return true;
+  }
+  if (request.action === 'getETFMonths') {
+    (async () => {
+      try {
+        // 跨多个月拉 etfs 记录（用于趋势图）
+        const months = request.months || [];
+        const data = {};
+        for (const ym of months) {
+          const [y, m] = ym.split('-').map(Number);
+          const lastDay = new Date(y, m, 0).getDate();
+          const start = `${ym}-01`;
+          const end = `${ym}-${String(lastDay).padStart(2, '0')}`;
+          const records = await getETFsByDateRange(start, end);
+          data[ym] = records;
+        }
+        sendResponse({ success: true, data });
+      } catch (e) {
+        console.error('[bg] getETFMonths failed', e);
+        sendResponse({ success: false, error: e.message, data: {} });
+      }
+    })();
+    return true;
+  }
   if (request.action === 'reimportHistory') {
     (async () => {
       // 置 0 让 importHistoryIfNeeded 走重导流程（新版本会覆盖）
@@ -540,6 +593,25 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       } catch (e) {
         console.error('[bg] fetchAshareJune failed', e);
         sendResponse({ success: false, error: e.message });
+      }
+    })();
+    return true;
+  }
+  if (request.action === 'fetchETFHistory') {
+    (async () => {
+      try {
+        // keep-alive for long task (~30-60s for 38 ETF)
+        nukeInProgress = true;
+        nukeInProgressExpiresAt = Date.now() + 5 * 60 * 1000;
+        try { chrome.alarms.create(KEEPALIVE_ALARM_NAME, { periodInMinutes: 1 }); } catch (e) {}
+        const result = await fetchAndStoreETFHistory(request.options || {});
+        sendResponse(result);
+      } catch (e) {
+        console.error('[bg] fetchETFHistory failed', e);
+        sendResponse({ success: false, error: e.message });
+      } finally {
+        nukeInProgress = false;
+        try { chrome.alarms.clear(KEEPALIVE_ALARM_NAME); } catch (e) {}
       }
     })();
     return true;

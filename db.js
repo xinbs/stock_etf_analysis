@@ -199,6 +199,57 @@ export async function saveETFRecord(record) {
   return { action: 'added', id };
 }
 
+// 批量导入 etfs（按 code+date 去重）
+export async function bulkImportETFs(records, batchSize = 200) {
+  let added = 0, updated = 0;
+  for (let i = 0; i < records.length; i += batchSize) {
+    const batch = records.slice(i, i + batchSize);
+    const result = await bulkImportETFsBatch(batch);
+    added += result.added;
+    updated += result.updated;
+  }
+  return { added, updated };
+}
+
+async function bulkImportETFsBatch(records) {
+  const db = await openDB();
+  const tx = db.transaction('etfs', 'readwrite');
+  const store = tx.objectStore('etfs');
+  const dateIdx = store.index('date');
+  let added = 0, updated = 0;
+  try {
+    for (const rec of records) {
+      const existing = await requestToPromise(dateIdx.getAll(IDBKeyRange.only(rec.date)));
+      const dup = existing.find(r => r.code === rec.code);
+      if (dup) {
+        Object.assign(dup, rec, { id: dup.id });
+        await requestToPromise(store.put(dup));
+        updated++;
+      } else {
+        await requestToPromise(store.add(rec));
+        added++;
+      }
+    }
+  } catch (e) {
+    console.error('[bulkImportETFsBatch] mid-loop error:', e, 'partial added/updated:', added, updated);
+    throw e;
+  }
+  await new Promise((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+    tx.onabort = () => reject(tx.error);
+  });
+  return { added, updated };
+}
+
+// 按日期范围查 etfs
+export async function getETFsByDateRange(start, end) {
+  const tx = await transaction('etfs', 'readonly');
+  const store = tx.objectStore('etfs');
+  const idx = store.index('date');
+  return requestToPromise(idx.getAll(IDBKeyRange.bound(start, end)));
+}
+
 // ===== meta =====
 export async function setMeta(key, value) {
   const tx = await transaction('meta', 'readwrite');
@@ -296,6 +347,54 @@ export async function clearHistoryIndices(batchSize = 200) {
   return cleared;
 }
 
+// 批量导入 sectors（按 sector+date 去重），独立 tx + 分批
+export async function bulkImportSectors(records, batchSize = 200) {
+  let added = 0, updated = 0;
+  for (let i = 0; i < records.length; i += batchSize) {
+    const batch = records.slice(i, i + batchSize);
+    const result = await bulkImportSectorsBatch(batch);
+    added += result.added;
+    updated += result.updated;
+  }
+  return { added, updated };
+}
+
+async function bulkImportSectorsBatch(records) {
+  const db = await openDB();
+  const tx = db.transaction('sectors', 'readwrite');
+  const store = tx.objectStore('sectors');
+  const dateIdx = store.index('date');
+  let added = 0, updated = 0;
+  try {
+    for (const rec of records) {
+      const existing = await requestToPromise(dateIdx.getAll(IDBKeyRange.only(rec.date)));
+      const dup = existing.find(r => r.sector === rec.sector);
+      if (dup) {
+        Object.assign(dup, rec, { id: dup.id });
+        await requestToPromise(store.put(dup));
+        updated++;
+      } else {
+        await requestToPromise(store.add(rec));
+        added++;
+      }
+    }
+  } catch (e) {
+    console.error('[bulkImportSectorsBatch] mid-loop error:', e, 'partial added/updated:', added, updated);
+    throw e;
+  }
+  try {
+    await new Promise((resolve, reject) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+  } catch (e) {
+    console.error('[bulkImportSectorsBatch] tx commit error:', e);
+    throw e;
+  }
+  return { added, updated };
+}
+
 // ===== 工具 =====
 function fmtDate(d = new Date()) {
   const year = d.getFullYear();
@@ -317,6 +416,9 @@ if (typeof self !== 'undefined' && !('exports' in self)) {
     getSectorsByMonth,
     getAllAvailableMonths,
     bulkImportIndices,
+    bulkImportSectors,
+    bulkImportETFs,
+    getETFsByDateRange,
     hasTodayIndexRecord,
     hasTodayMarketRecord,
     hasTodaySectorRecord,
