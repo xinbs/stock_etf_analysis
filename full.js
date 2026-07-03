@@ -1952,6 +1952,28 @@ document.getElementById('btnReimport')?.addEventListener('click', async () => {
     if (btn) { btn.textContent = '⚙ 重新建库'; btn.disabled = false; }
   }
 });
+document.getElementById('btnAshare')?.addEventListener('click', async () => {
+  const btn = document.getElementById('btnAshare');
+  if (btn) { btn.textContent = '拉取中...'; btn.disabled = true; }
+  updateStatus('正在从腾讯 K 线拉 A 股 6 月每日数据...');
+  try {
+    const res = await new Promise(r => chrome.runtime?.sendMessage({ action: 'fetchAshareJune' }, r));
+    console.log('[ashare]', res);
+    if (!res?.success) throw new Error(res?.error || '未知错误');
+    const summary = Object.entries(res.summary || {}).map(([code, v]) => `${v.name}(${v.count}条)`).join(', ');
+    availableMonthsCache = null;
+    monthlyDataCache = null;
+    await new Promise(r => setTimeout(r, 400));
+    await renderMonthlyReport();
+    updateStatus(`A 股 6 月补完：added=${res.added} updated=${res.updated} · ${summary}`);
+    toast('A 股 6 月补完');
+  } catch (e) {
+    console.error(e);
+    updateStatus('拉取失败: ' + e.message);
+  } finally {
+    if (btn) { btn.textContent = '📈 补 A 股 6 月'; btn.disabled = false; }
+  }
+});
 document.getElementById('btnNuke')?.addEventListener('click', async () => {
   if (!confirm('彻底清掉本地数据库并重建？会有几秒延迟，期间别关闭扩展。')) return;
   const btn = document.getElementById('btnNuke');

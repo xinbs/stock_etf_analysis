@@ -9,6 +9,7 @@ import {
   clearHistoryIndices, getIndicesByDateRange, getSectorsByDateRange,
   resetDbConnection
 } from './db.js';
+import { fetchAndStoreAJune } from './ashare_history.js';
 
 const COLLECTION_ALARM_NAME = 'dailyCollect';
 const ALARM_PERIOD_MINUTES = 5;
@@ -528,6 +529,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       await setMeta('historyImported', 0);
       const result = await importHistoryIfNeeded();
       sendResponse({ success: true, result });
+    })();
+    return true;
+  }
+  if (request.action === 'fetchAshareJune') {
+    (async () => {
+      try {
+        const result = await fetchAndStoreAJune(request.year || 2026);
+        sendResponse(result);
+      } catch (e) {
+        console.error('[bg] fetchAshareJune failed', e);
+        sendResponse({ success: false, error: e.message });
+      }
     })();
     return true;
   }
