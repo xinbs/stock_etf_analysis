@@ -616,6 +616,41 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     })();
     return true;
   }
+  if (request.action === 'probeMonthETFs') {
+    // 诊断：返回指定月份所有 etf records + 聚合后的 sector 涨跌
+    (async () => {
+      try {
+        const [y, m] = request.yearMonth.split('-').map(Number);
+        const lastDay = new Date(y, m, 0).getDate();
+        const start = `${request.yearMonth}-01`;
+        const end = `${request.yearMonth}-${String(lastDay).padStart(2, '0')}`;
+        const records = await getETFsByDateRange(start, end);
+        // 返回所有日期和每个 code 在该月第一天 / 最后一天的 close
+        const dates = [...new Set(records.map(r => r.date))].sort();
+        const codeFirstLast = {};
+        for (const r of records) {
+          if (!codeFirstLast[r.code]) {
+            codeFirstLast[r.code] = { name: r.name, sector: r.sector, firstDate: r.date, firstClose: r.close, lastDate: r.date, lastClose: r.close };
+          } else {
+            const v = codeFirstLast[r.code];
+            if (r.date < v.firstDate) { v.firstDate = r.date; v.firstClose = r.close; }
+            if (r.date > v.lastDate) { v.lastDate = r.date; v.lastClose = r.close; }
+          }
+        }
+        sendResponse({
+          success: true,
+          yearMonth: request.yearMonth,
+          totalRecords: records.length,
+          uniqueDates: dates,
+          codeFirstLast,
+        });
+      } catch (e) {
+        console.error('[bg] probeMonthETFs failed', e);
+        sendResponse({ success: false, error: e.message });
+      }
+    })();
+    return true;
+  }
   if (request.action === 'nukeAndReimport') {
     // 彻底清掉整个 DB 再重建（用于事务残留数据修复）
     (async () => {
@@ -709,7 +744,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       try {
         const months = await getAllAvailableMonths();
         const imported = await getMeta('historyImported');
-        const { openDB } = await import('./db.js');
         const db = await openDB();
         const tx = db.transaction(['indices', 'sectors', 'etfs'], 'readonly');
         const idxDateIdx = tx.objectStore('indices').index('date');
