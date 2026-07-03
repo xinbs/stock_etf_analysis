@@ -992,25 +992,45 @@ function aggregateMonthlySectors(records) {
 }
 
 // 从单月 ETF records 算 sector 月累计涨跌（月初首日 close → 月末最后一日 close，复利）
+// tradingDays: 该月有数据的交易日数（用于判断是否完整月）
 function aggregateETFsToMonthlySectors(etfRecords) {
   // etfRecords: [{date, code, sector, close, name, ...}]
-  // 第一步：对每个 (code, sector) 找到月初首日 close 和月末最后一日 close
-  const codeMap = new Map(); // code -> {sector, firstDate, firstClose, lastDate, lastClose, name}
+  // 统计该月有多少个唯一交易日期
+  const tradingDays = new Set(etfRecords.map(r => r.date)).size;
+  // 完整月（>=10 个交易日）才用月初-月末复利；不完整月用日均
+  const isCompleteMonth = tradingDays >= 10;
+
+  // 第一步：对每个 (code, sector) 找月初首日 close 和月末最后一日 close
+  const codeMap = new Map();
   for (const r of etfRecords) {
     if (!codeMap.has(r.code)) {
-      codeMap.set(r.code, { sector: r.sector, name: r.name, firstDate: r.date, firstClose: r.close, lastDate: r.date, lastClose: r.close });
+      codeMap.set(r.code, { sector: r.sector, name: r.name, firstDate: r.date, firstClose: r.close, lastDate: r.date, lastClose: r.close, allRecords: [r] });
     } else {
       const v = codeMap.get(r.code);
       if (r.date < v.firstDate) { v.firstDate = r.date; v.firstClose = r.close; }
       if (r.date > v.lastDate) { v.lastDate = r.date; v.lastClose = r.close; }
+      v.allRecords.push(r);
     }
   }
   // 第二步：按 sector 聚合
   const secMap = new Map();
   for (const [code, info] of codeMap) {
-    if (info.firstClose <= 0) continue;
-    // 月累计涨跌（复利）
-    const monthChange = ((info.lastClose - info.firstClose) / info.firstClose) * 100;
+    let monthChange;
+    if (isCompleteMonth) {
+      if (info.firstClose <= 0) continue;
+      // 完整月：月初首日 close → 月末最后一日 close（复利）
+      monthChange = ((info.lastClose - info.firstClose) / info.firstClose) * 100;
+    } else {
+      // 不完整月（当前月）：用月内日均 daily changePct
+      const recs = [...info.allRecords].sort((a, b) => a.date.localeCompare(b.date));
+      const dailies = [];
+      for (let i = 1; i < recs.length; i++) {
+        const prev = recs[i - 1].close;
+        const cur = recs[i].close;
+        if (prev > 0) dailies.push(((cur - prev) / prev) * 100);
+      }
+      monthChange = dailies.length ? dailies.reduce((a, b) => a + b, 0) : 0;
+    }
     if (!secMap.has(info.sector)) {
       secMap.set(info.sector, { sector: info.sector, count: 0, sumMonthChange: 0, etfs: [] });
     }
@@ -1022,10 +1042,9 @@ function aggregateETFsToMonthlySectors(etfRecords) {
   return Array.from(secMap.values()).map(s => ({
     sector: s.sector,
     count: s.count,
-    // 月内日均涨跌：这里用月累计涨跌近似
     avgDaily: +(s.sumMonthChange / s.count).toFixed(2),
-    // 月累计涨跌
     avgYtd: +(s.sumMonthChange / s.count).toFixed(2),
+    tradingDays,
   }));
 }
 
@@ -1098,9 +1117,12 @@ async function renderMonthlyReport() {
     ]);
 
     // 优先用 ETF records 算月度 sector 累计涨跌
+    const isCurrentMonth = yearMonth === fmtYearMonth(new Date());
     monthlyDataCache = monthETFs.length > 0
       ? aggregateETFsToMonthlySectors(monthETFs)
       : [];
+    const tradingDays = monthlyDataCache[0]?.tradingDays || 0;
+    const isPartialMonth = isCurrentMonth && tradingDays > 0 && tradingDays < 5;
 
     // 月份下拉需要包含 ETF 历史覆盖的范围
     // （loadAvailableMonths 内部已经处理了 indices + sectors；ETF 月份需要手动补）
@@ -1143,9 +1165,10 @@ async function renderMonthlyReport() {
       : monthlyDataCache;
 
     // 3) 渲染：4 张图
+    const partialHint = isPartialMonth ? `（${tradingDays} 天数据，不完整）` : '';
     if (filtered.length > 0) {
-      renderMonthlySectorChart(filtered);
-      renderBestWorstChart(filtered);
+      renderMonthlySectorChart(filtered, partialHint);
+      renderBestWorstChart(filtered, partialHint);
     } else {
       renderEmptyChart('monthlySectorChart', `${yearMonth} 当月无板块数据（采集从今天开始）`);
       renderEmptyChart('bestWorstChart', `${yearMonth} 当月无板块数据（采集从今天开始）`);
@@ -1154,7 +1177,7 @@ async function renderMonthlyReport() {
     renderIndexVsSectorChartFromData(prevMonths, aggregatedIndexByMonth, etfMonths);
 
     if (filtered.length > 0) {
-      updateStatus(`${yearMonth} 月报 · ${filtered.length} 个板块`);
+      updateStatus(`${yearMonth} 月报 · ${filtered.length} 个板块${partialHint}`);
     } else {
       updateStatus(`${yearMonth} 月报 · 板块数据从今天开始累，指数历史已可用`);
     }
@@ -1358,7 +1381,7 @@ function renderIndexVsSectorChartFromData(months, indexSeries, etfMonths) {
   }, true);
 }
 
-function renderMonthlySectorChart(sectors) {
+function renderMonthlySectorChart(sectors, partialHint = '') {
   const sorted = [...sectors].sort((a, b) => a.avgDaily - b.avgDaily);
   const upColor = '#ff7b72';
   const downColor = '#7ee787';
@@ -1369,6 +1392,7 @@ function renderMonthlySectorChart(sectors) {
   if (!monthlySectorChart) monthlySectorChart = echarts.init(el);
   monthlySectorChart.setOption({
     backgroundColor: 'transparent',
+    title: partialHint ? { text: partialHint, left: 'center', top: 0, textStyle: { color: '#ffa657', fontSize: 12 } } : undefined,
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
@@ -1408,7 +1432,7 @@ function renderMonthlySectorChart(sectors) {
   }, true);
 }
 
-function renderBestWorstChart(sectors) {
+function renderBestWorstChart(sectors, partialHint = '') {
   const sorted = [...sectors].sort((a, b) => b.avgDaily - a.avgDaily);
   const topN = 5;
   const best = sorted.slice(0, topN).reverse();
@@ -1424,6 +1448,7 @@ function renderBestWorstChart(sectors) {
   const values = [...worst.map(s => s.avgDaily), ...best.map(s => s.avgDaily)];
   bestWorstChart.setOption({
     backgroundColor: 'transparent',
+    title: partialHint ? { text: partialHint, left: 'center', top: 0, textStyle: { color: '#ffa657', fontSize: 12 } } : undefined,
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },

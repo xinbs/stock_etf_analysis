@@ -709,12 +709,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       try {
         const months = await getAllAvailableMonths();
         const imported = await getMeta('historyImported');
-        // 探针：用 cursor 遍历 date index 拿真实 key 值
+        const { openDB } = await import('./db.js');
         const db = await openDB();
-        const tx = db.transaction(['indices', 'sectors'], 'readonly');
+        const tx = db.transaction(['indices', 'sectors', 'etfs'], 'readonly');
         const idxDateIdx = tx.objectStore('indices').index('date');
         const secDateIdx = tx.objectStore('sectors').index('date');
-        // cursor 拿 date index 的实际 key
+        const etfDateIdx = tx.objectStore('etfs').index('date');
         const idxDates = await new Promise(r => {
           const out = [];
           const req = idxDateIdx.openKeyCursor();
@@ -733,18 +733,29 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           };
           req.onerror = () => r([]);
         });
-        const idxDatesStr = idxDates.filter(k => typeof k === 'string').sort();
-        const secDatesStr = secDates.filter(k => typeof k === 'string').sort();
+        const etfDates = await new Promise(r => {
+          const out = [];
+          const req = etfDateIdx.openKeyCursor();
+          req.onsuccess = () => {
+            const cur = req.result;
+            if (cur) { out.push(cur.key); cur.continue(); } else r(out);
+          };
+          req.onerror = () => r([]);
+        });
+        const filterStr = arr => arr.filter(k => typeof k === 'string').sort();
         sendResponse({
           success: true,
           months,
           historyImported: imported,
           indicesCount: idxDates.length,
           sectorsCount: secDates.length,
-          indicesMinDate: idxDatesStr[0] || null,
-          indicesMaxDate: idxDatesStr.slice(-1)[0] || null,
-          sectorsMinDate: secDatesStr[0] || null,
-          sectorsMaxDate: secDatesStr.slice(-1)[0] || null,
+          etfsCount: etfDates.length,
+          indicesMinDate: filterStr(idxDates)[0] || null,
+          indicesMaxDate: filterStr(idxDates).slice(-1)[0] || null,
+          sectorsMinDate: filterStr(secDates)[0] || null,
+          sectorsMaxDate: filterStr(secDates).slice(-1)[0] || null,
+          etfsMinDate: filterStr(etfDates)[0] || null,
+          etfsMaxDate: filterStr(etfDates).slice(-1)[0] || null,
         });
       } catch (e) {
         console.error('[bg] dbStatus failed', e);
