@@ -958,22 +958,28 @@ function aggregateMonthlySectors(records) {
 }
 
 // 把一个月内按 code 的指数日记录聚合成一条月记录（月均涨跌幅）
+// 取每月最后一天 + 月均 daily 涨跌
 function aggregateMonthlyIndices(records) {
   const map = {};
   for (const r of records) {
     if (!map[r.code]) {
-      map[r.code] = { code: r.code, name: r.name, market: r.market, sumChangePct: 0, sumYtd: 0, n: 0 };
+      map[r.code] = { code: r.code, name: r.name, market: r.market, lastDate: '', lastYtd: 0, sumChangePct: 0, sumYtd: 0, n: 0 };
     }
     if (typeof r.changePct === 'number') map[r.code].sumChangePct += r.changePct;
     if (typeof r.ytd === 'number') map[r.code].sumYtd += r.ytd;
     map[r.code].n += 1;
+    if (r.date > map[r.code].lastDate) {
+      map[r.code].lastDate = r.date;
+      map[r.code].lastYtd = r.ytd;
+    }
   }
   return Object.values(map).map(i => ({
     code: i.code,
     name: i.name,
     market: i.market,
     changePct: i.n ? +(i.sumChangePct / i.n).toFixed(2) : 0,
-    ytd: i.n ? +(i.sumYtd / i.n).toFixed(2) : 0,
+    // 用最后一天的 ytd（更能反映"这个月累计涨跌"）
+    ytd: typeof i.lastYtd === 'number' ? +i.lastYtd.toFixed(2) : (i.n ? +(i.sumYtd / i.n).toFixed(2) : 0),
   }));
 }
 
@@ -1018,6 +1024,12 @@ async function renderMonthlyReport() {
     ]);
     monthlyDataCache = aggregateMonthlySectors(rawSectorRecords);
 
+    // 把 indexRangeData（日级 records）按月聚合成 {ym: {code: {changePct, ytd, ...}}}
+    const aggregatedIndexByMonth = {};
+    for (const ym of Object.keys(indexRangeData)) {
+      aggregatedIndexByMonth[ym] = aggregateMonthlyIndices(indexRangeData[ym]);
+    }
+
     // 板块过滤器（用 sectorRangeData 6 个月内所有 sector 列表，跨月份都能筛）
     const sectorFilter = document.getElementById('sectorFilter');
     if (sectorFilter) {
@@ -1049,8 +1061,8 @@ async function renderMonthlyReport() {
       renderEmptyChart('monthlySectorChart', `${yearMonth} 当月无板块数据（采集从今天开始）`);
       renderEmptyChart('bestWorstChart', `${yearMonth} 当月无板块数据（采集从今天开始）`);
     }
-    renderSectorTrendChartFromData(trendData, indexRangeData);
-    renderIndexVsSectorChartFromData(getPrevMonths(yearMonth, 6), indexRangeData, sectorRangeData);
+    renderSectorTrendChartFromData(trendData, aggregatedIndexByMonth);
+    renderIndexVsSectorChartFromData(getPrevMonths(yearMonth, 6), aggregatedIndexByMonth, sectorRangeData);
 
     if (filtered.length > 0) {
       updateStatus(`${yearMonth} 月报 · ${filtered.length} 个板块`);
@@ -1118,7 +1130,10 @@ function renderSectorTrendChartFromData({ months, data: all }, indexSeries) {
       symbolSize: 6,
       data: months.map(ym => {
         const rec = (indexSeries[ym] || []).find(r => r.code === code);
-        return rec && typeof rec.ytd === 'number' ? rec.ytd : null;
+        if (!rec) return null;
+        // 用 rec.ytd —— 历史导入的 ytd 是"6 月初（=yearStart）以来累计涨跌"
+        // 选具体某月时这条线会画出"该月月均的累计涨跌"，反映当月累计走势
+        return typeof rec.ytd === 'number' ? rec.ytd : (typeof rec.changePct === 'number' ? rec.changePct : null);
       }),
       lineStyle: { width: 2 },
       itemStyle: { color: colors[idx % colors.length] }
@@ -1187,6 +1202,7 @@ function renderIndexVsSectorChartFromData(months, indexSeries, sectorSeries) {
     const data = months.map(ym => {
       const arr = (indexSeries[ym] || []).filter(r => r.market === m);
       if (arr.length === 0) return null;
+      // indexSeries[ym] 已是按月聚合（每月每 code 1 条），直接平均
       return +(arr.reduce((a, b) => a + (b.changePct || 0), 0) / arr.length).toFixed(2);
     });
     if (data.every(v => v === null)) continue;
