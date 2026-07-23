@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ETF 板块机会分析</title>
+  <script src="/extension/echarts.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0d1117; color: #c9d1d9; padding: 14px; }
+    h1 { text-align: center; color: #58a6ff; font-size: 24px; margin: 8px 0 4px; }
+    .sub { text-align: center; color: #8b949e; font-size: 13px; margin-bottom: 12px; }
+    .bar { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; margin: 12px 0 16px; }
+    .btn, .btn2, .btn3 { border: 0; border-radius: 6px; padding: 8px 14px; color: white; font-weight: 700; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+    .btn { background: #238636; }
+    .btn2 { background: #1f6feb; }
+    .btn3 { background: #30363d; color: #c9d1d9; }
+    .btn.active { background: #f0883e; }
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 12px; }
+    .warn { border-color: #9e6a03; background: #1f1a0f; color: #d29922; margin-bottom: 12px; display: none; }
+    .summary { display: grid; grid-template-columns: 1.5fr repeat(4, 1fr); gap: 10px; margin-bottom: 12px; }
+    .stat .label { color: #8b949e; font-size: 12px; margin-bottom: 5px; }
+    .stat .val { font-size: 22px; font-weight: 800; color: #e6edf3; }
+    .layout { display: grid; grid-template-columns: minmax(620px, 1fr) minmax(520px, 0.9fr); gap: 12px; align-items: start; }
+    .filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; align-items: center; }
+    .toggle { padding: 5px 10px; border-radius: 5px; background: #0d1117; border: 1px solid #30363d; color: #8b949e; cursor: pointer; font-size: 12px; }
+    .toggle.active { color: white; border-color: #1f6feb; background: #1f6feb; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td { padding: 8px 7px; border-bottom: 1px solid #21262d; text-align: left; white-space: nowrap; }
+    th { color: #8b949e; background: #0d1117; position: sticky; top: 0; z-index: 1; }
+    tr { cursor: pointer; }
+    tr:hover, tr.selected { background: #1c2633; }
+    .score { font-size: 18px; font-weight: 800; color: #ffa657; }
+    .tag { display: inline-block; padding: 2px 6px; border-radius: 4px; background: #30363d; color: #c9d1d9; margin-right: 4px; margin-bottom: 3px; }
+    .tag.good { background: #12351f; color: #7ee787; }
+    .tag.hot { background: #3d1f1f; color: #ff7b72; }
+    .tag.warn { background: #332800; color: #d29922; border: 0; display: inline-block; margin: 0 4px 3px 0; }
+    .muted { color: #8b949e; }
+    .detail-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 10px; }
+    .detail-title { font-size: 18px; font-weight: 800; color: #e6edf3; }
+    .metric-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0; }
+    .metric { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 8px; }
+    .metric .label { font-size: 11px; color: #8b949e; }
+    .metric .val { margin-top: 4px; font-size: 15px; font-weight: 800; }
+    #klineChart { height: 360px; margin-top: 8px; }
+    .watch { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px; }
+    .watch h3 { font-size: 14px; margin-bottom: 8px; color: #e6edf3; }
+    .watch li { list-style: none; padding: 6px 0; border-bottom: 1px solid #21262d; font-size: 12px; display: flex; justify-content: space-between; gap: 8px; }
+    .table-wrap { max-height: 690px; overflow: auto; border: 1px solid #21262d; border-radius: 6px; }
+    @media (max-width: 1180px) { .layout, .summary, .watch { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <h1>ETF 板块机会分析</h1>
+  <div class="sub" id="subtitle">价格位置 · 趋势 · 动量 · 风险</div>
+  <div class="bar">
+    <a class="btn3" href="/">返回大盘</a>
+    <button class="btn3 mode" data-mode="short">短线强势</button>
+    <button class="btn mode active" data-mode="swing">波段机会</button>
+    <button class="btn3 mode" data-mode="long">中长期配置</button>
+    <button class="btn2" id="refreshBtn">刷新分析</button>
+    <button class="btn3" id="historyBtn">补 ETF 历史</button>
+  </div>
+
+  <div class="card warn" id="historyWarn"></div>
+
+  <section class="summary">
+    <div class="card stat"><div class="label">Top 5 机会板块</div><div class="val" id="top5">-</div></div>
+    <div class="card stat"><div class="label">低位企稳</div><div class="val" id="lowStable">-</div></div>
+    <div class="card stat"><div class="label">趋势转强</div><div class="val" id="trendUp">-</div></div>
+    <div class="card stat"><div class="label">风险偏高</div><div class="val" id="highRisk">-</div></div>
+    <div class="card stat"><div class="label">历史覆盖</div><div class="val" id="historyRange" style="font-size:14px">-</div></div>
+  </section>
+
+  <main class="layout">
+    <section class="card">
+      <div class="filters">
+        <strong>机会排行榜</strong>
+        <button class="toggle" id="lowFilter">只看低位</button>
+        <button class="toggle" id="trendFilter">只看趋势转强</button>
+        <button class="toggle active" id="excludeHot">排除高位追涨</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>板块</th><th>机会</th><th>位置</th><th>趋势</th><th>动量</th><th>风险</th><th>标签</th><th>代表 ETF</th></tr>
+          </thead>
+          <tbody id="rankBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card" id="detail">
+      <div class="detail-head">
+        <div>
+          <div class="detail-title" id="detailTitle">选择一个板块</div>
+          <div class="muted" id="detailDesc">点击左侧排行榜查看 K 线和评分解释</div>
+        </div>
+        <div class="score" id="detailScore">-</div>
+      </div>
+      <div id="detailTags"></div>
+      <div class="metric-grid" id="metrics"></div>
+      <div id="klineChart"></div>
+      <div style="margin-top:10px">
+        <strong>ETF 明细</strong>
+        <table style="margin-top:6px">
+          <thead><tr><th>名称</th><th>代码</th><th>状态</th><th>机会</th><th>今日</th><th>20日</th><th>位置</th></tr></thead>
+          <tbody id="etfBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <section class="watch">
+    <div class="card"><h3>值得关注</h3><ul id="watchWorth"></ul></div>
+    <div class="card"><h3>已经走强</h3><ul id="watchStrong"></ul></div>
+    <div class="card"><h3>暂不碰</h3><ul id="watchAvoid"></ul></div>
+  </section>
+
+  <script src="/analysis.js"></script>
+</body>
+</html>

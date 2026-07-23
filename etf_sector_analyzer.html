@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ETF板块大盘分析器（猪肉群专用）</title>
+  <script src="echarts.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      background: #0d1117; color: #c9d1d9; padding: 16px; min-height: 100vh;
+    }
+    h1 { text-align: center; color: #58a6ff; margin-bottom: 4px; font-size: 22px; }
+    .subtitle { text-align: center; color: #8b949e; font-size: 12px; margin-bottom: 10px; }
+    .status-line { text-align: center; color: #8b949e; font-size: 12px; margin-bottom: 10px; }
+    .top-bar { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; margin-bottom: 14px; }
+    .top-bar button { padding: 6px 14px; border-radius: 6px; border: none; cursor: pointer; font-size: 13px; }
+    .top-bar button.btn { background: #238636; color: white; }
+    .top-bar button.btn2 { background: #1f6feb; color: white; }
+    .top-bar button.btn3 { background: #30363d; color: #c9d1d9; }
+    .top-bar button.danger { background: #da3633; color: white; }
+    .dashboard { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
+    @media (max-width: 900px) { .dashboard { grid-template-columns: 1fr; } }
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 12px; }
+    .card h2 { font-size: 14px; color: #e6edf3; margin-bottom: 8px; border-bottom: 1px solid #30363d; padding-bottom: 6px; }
+    .chart-box { width: 100%; height: 420px; }
+    .stats-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; text-align: center; margin-bottom: 16px; }
+    .stat-item .stat-value { font-size: 20px; font-weight: 700; }
+    .stat-item .stat-label { font-size: 11px; color: #8b949e; margin-top: 2px; }
+    .etf-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .etf-table th { text-align: left; padding: 8px 6px; background: #0d1117; color: #8b949e; font-weight: 600; border-bottom: 1px solid #30363d; cursor: pointer; user-select: none; }
+    .etf-table th:hover { color: #e6edf3; }
+    .etf-table td { padding: 6px; border-bottom: 1px solid #21262d; }
+    .etf-table tr:hover { background: #1c2128; }
+    .etf-code { color: #58a6ff; font-size: 11px; }
+    .sector-tag { font-size: 10px; padding: 2px 6px; border-radius: 8px; background: #30363d; color: #8b949e; }
+    .badge { padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; min-width: 50px; text-align: center; display: inline-block; }
+    .badge.up { background: #3d1f1f; color: #ff7b72; }
+    .badge.down { background: #1f3d1f; color: #7ee787; }
+    .badge.flat { background: #30363d; color: #8b949e; }
+    .editor { display: none; margin-top: 12px; }
+    textarea { width: 100%; height: 160px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; padding: 10px; font-family: monospace; font-size: 11px; resize: vertical; }
+    .toast { position: fixed; bottom: 24px; right: 24px; background: #238636; color: white; padding: 10px 18px; border-radius: 6px; font-size: 14px; z-index: 1000; opacity: 0; transition: opacity 0.3s; pointer-events: none; }
+    .toast.show { opacity: 1; }
+    .sort-arrow::after { content: ' ↕'; font-size: 9px; color: #8b949e; }
+    .sort-asc::after { content: ' ↑'; color: #58a6ff; }
+    .sort-desc::after { content: ' ↓'; color: #58a6ff; }
+    .hint { text-align: center; color: #8b949e; font-size: 12px; margin: 8px 0; padding: 8px; background: #161b22; border-radius: 6px; border: 1px solid #30363d; }
+  </style>
+</head>
+<body>
+  <h1>ETF 板块大盘分析器（猪肉群专用）</h1>
+  <div class="subtitle">基于爱盯盘数据，自动分析板块涨跌</div>
+  <div class="status-line" id="statusLine">加载中...</div>
+
+  <div class="top-bar">
+    <button class="btn" onclick="toggleEditor()">编辑数据</button>
+    <button class="btn2" onclick="refreshData()">刷新数据（腾讯财经）</button>
+    <button class="danger" onclick="exportData()">导出 JSON</button>
+    <input type="file" id="importFile" accept=".json" onchange="importData()" style="display:none">
+    <button class="btn2" onclick="document.getElementById('importFile').click()">导入 JSON</button>
+  </div>
+
+  <div class="hint" id="hintBox">
+    提示：独立 HTML 可直接调用扩展后台获取实时数据。<br>
+    方式1：点击「刷新数据（腾讯财经）」→ 自动获取实时价格和涨跌幅<br>
+    方式2：手动编辑 JSON 数据 → 点击「编辑数据」<br>
+    如果未安装扩展，将使用默认数据（涨跌为截图时刻数据）
+  </div>
+
+  <div class="dashboard">
+    <div class="card">
+      <h2>板块当日涨跌排名</h2>
+      <div id="dailyChart" class="chart-box"></div>
+    </div>
+    <div class="card">
+      <h2>板块年度涨跌排名</h2>
+      <div id="ytdChart" class="chart-box"></div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom: 16px">
+    <div class="stats-grid" id="statsPanel"></div>
+  </div>
+
+  <div class="card">
+    <h2>全部 ETF 明细</h2>
+    <table class="etf-table" id="etfTable">
+      <thead>
+        <tr>
+          <th onclick="sortTable('name')">名称 <span class="sort-arrow"></span></th>
+          <th onclick="sortTable('code')">代码 <span class="sort-arrow"></span></th>
+          <th onclick="sortTable('sector')">板块 <span class="sort-arrow"></span></th>
+          <th onclick="sortTable('daily')">当日涨跌 <span class="sort-arrow"></span></th>
+          <th onclick="sortTable('ytd')">年初至今 <span class="sort-arrow"></span></th>
+        </tr>
+      </thead>
+      <tbody id="etfTableBody"></tbody>
+    </table>
+  </div>
+
+  <div class="editor" id="editor">
+    <div class="card">
+      <h2>数据编辑（JSON 格式）</h2>
+      <textarea id="dataEditor"></textarea>
+      <div class="top-bar" style="margin-top:6px">
+        <button class="btn" onclick="saveData()">保存</button>
+        <button class="btn2" onclick="loadDefault()">恢复默认</button>
+        <button class="btn3" onclick="cancelEdit()">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+<script>
+// ======================== 数据配置 ========================
+const ETF_CODES = {
+  'sh513310': '中韩半导体ETF', 'sh515050': '通信ETF华夏', 'sh515880': '通信ETF国泰',
+  'sh588200': '科创芯片ETF嘉', 'sh512480': '半导体ETF国联', 'sz159995': '芯片ETF华夏',
+  'sh562800': '稀有金属ETF嘉', 'sh515220': '煤炭ETF国泰', 'sh516150': '稀土ETF嘉实',
+  'sh562500': '机器人ETF华夏', 'sh515790': '光伏ETF华泰柏', 'sh512950': '央企改革ETF华',
+  'sh512400': '有色金属ETF南', 'sh516160': '新能源ETF南方', 'sh515700': '新能源车ETF平',
+  'sh516510': '云计算ETF易方', 'sh515080': '中证红利ETF招', 'sh512720': '计算机ETF国泰',
+  'sh518880': '黄金ETF华安', 'sh516970': '基建ETF广发', 'sh512670': '国防ETF鹏华',
+  'sh512800': '银行ETF华宝', 'sz159996': '家电ETF国泰', 'sh512660': '军工ETF国泰',
+  'sh512880': '证券ETF国泰', 'sh512000': '券商ETF华宝', 'sz159647': '中药ETF鹏华',
+  'sh512170': '医疗ETF华宝', 'sh515210': '钢铁ETF国泰', 'sh516820': '医疗创新ETF平',
+  'sh512200': '房地产ETF南方', 'sh512980': '传媒ETF广发', 'sh515170': '食品饮料ETF华',
+  'sh516620': '影视ETF国泰', 'sh513360': '教育ETF博时', 'sh515230': '软件ETF国泰',
+  'sh512690': '酒ETF鹏华', 'sh516010': '游戏ETF国泰',
+};
+
+const DEFAULT_YTD = {
+  'sh513310': 133.37, 'sh515050': 73.91, 'sh515880': 69.52, 'sh588200': 61.83,
+  'sh512480': 56.9, 'sz159995': 48.96, 'sh562800': 23.98, 'sh515220': 17.41,
+  'sh516150': 14.03, 'sh562500': 12.07, 'sh515790': 7.17, 'sh512950': 6.75,
+  'sh512400': 6.64, 'sh516160': 5.88, 'sh515700': 3.36, 'sh516510': 0.41,
+  'sh515080': 0.2, 'sh512720': -1.0, 'sh518880': -3.62, 'sh516970': -3.88,
+  'sh512670': -4.31, 'sh512800': -4.62, 'sz159996': -6.07, 'sh512660': -6.48,
+  'sh512880': -10.82, 'sh512000': -10.88, 'sz159647': -13.61, 'sh512170': -14.12,
+  'sh515210': -15.92, 'sh516820': -16.07, 'sh512200': -16.81, 'sh512980': -17.84,
+  'sh515170': -18.07, 'sh516620': -19.09, 'sh513360': -19.96, 'sh515230': -20.54,
+  'sh512690': -23.32, 'sh516010': -27.57,
+};
+
+async function getYearStartPrice(code, year) {
+  const prefix = code.startsWith('sh') ? 'sh' : 'sz';
+  const num = code.replace(/^[a-z]+/, '');
+  const url = `https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=${prefix}${num},day,${year}-01-01,${year}-01-10,10,qfq`;
+  try {
+    const response = await fetch(url);
+    const data = await response.json();
+    const stockData = data.data?.[`${prefix}${num}`];
+    if (!stockData) return null;
+    const days = stockData.qfqday || stockData.day;
+    if (!days || days.length === 0) return null;
+    return parseFloat(days[0][2]);
+  } catch (e) { return null; }
+}
+
+async function fetchETFData() {
+  const codes = Object.keys(ETF_CODES).join(',');
+  const url = `https://qt.gtimg.cn/q=${codes}`;
+  try {
+    const response = await fetch(url);
+    const text = await response.text();
+    const currentData = {};
+    const lines = text.trim().split(';').filter(l => l.trim());
+    for (const line of lines) {
+      const match = line.match(/v_([a-z]{2}\d{6})="(.*)"/);
+      if (!match) continue;
+      const key = match[1];
+      const fields = match[2].split('~');
+      if (fields.length < 35) continue;
+      currentData[key] = {
+        code: fields[2],
+        currentPrice: parseFloat(fields[3]),
+        changePct: parseFloat(fields[32]),
+      };
+    }
+    // 获取年初收盘价并计算 YTD
+    const year = new Date().getFullYear();
+    const yearStartPromises = Object.keys(ETF_CODES).map(async (key) => {
+      const price = await getYearStartPrice(key, year);
+      return { key, price };
+    });
+    const yearStartResults = await Promise.all(yearStartPromises);
+    const etfs = [];
+    for (const key of Object.keys(ETF_CODES)) {
+      const current = currentData[key];
+      const yearStart = yearStartResults.find(r => r.key === key);
+      let ytd = DEFAULT_YTD[key] || 0;
+      if (current && yearStart && yearStart.price && yearStart.price > 0) {
+        const calcYtd = ((current.currentPrice - yearStart.price) / yearStart.price * 100);
+        if (!isNaN(calcYtd)) ytd = calcYtd;
+      }
+      etfs.push({
+        code: current?.code || key.replace(/^[a-z]+/, ''),
+        name: ETF_CODES[key],
+        sector: classifySector(ETF_CODES[key]),
+        daily: current?.changePct || 0,
+        ytd: parseFloat(ytd.toFixed(2)),
+      });
+    }
+    return etfs;
+  } catch (e) { console.error('fetchETFData failed', e); return null; }
+}
+
+// ======================== 智能板块分类 ========================
+function classifySector(name) {
+  const n = name;
+  if (n.includes('新能源车')) return '新能源/汽车';
+  if (n.includes('光伏')) return '新能源/光伏';
+  if (n.includes('新能源')) return '新能源';
+  if (n.includes('医疗创新')) return '医药/医疗';
+  if (n.includes('医疗')) return '医药/医疗';
+  if (n.includes('中药')) return '医药/中药';
+  if (n.includes('稀土')) return '有色金属/稀土';
+  if (n.includes('稀有金属') || n.includes('有色金属')) return '有色金属/材料';
+  if (n.includes('半导体') || n.includes('芯片') || n.includes('科创芯片')) return '半导体/芯片';
+  if (n.includes('通信')) return '通信';
+  if (n.includes('证券') || n.includes('券商')) return '金融/非银';
+  if (n.includes('银行')) return '金融/银行';
+  if (n.includes('黄金')) return '黄金/贵金属';
+  if (n.includes('煤炭')) return '能源/煤炭';
+  if (n.includes('机器人')) return '机器人/制造';
+  if (n.includes('央企')) return '央企/改革';
+  if (n.includes('云计算')) return '科技/云计算';
+  if (n.includes('计算机')) return '科技/计算机';
+  if (n.includes('软件')) return '科技/软件';
+  if (n.includes('红利')) return '红利/策略';
+  if (n.includes('基建')) return '基建/建筑';
+  if (n.includes('国防') || n.includes('军工')) return '国防/军工';
+  if (n.includes('家电')) return '消费/家电';
+  if (n.includes('钢铁')) return '钢铁/材料';
+  if (n.includes('房地产')) return '房地产';
+  if (n.includes('游戏')) return '传媒/文娱';
+  if (n.includes('传媒') || n.includes('影视')) return '传媒/文娱';
+  if (n.includes('食品') || n.includes('饮料')) return '消费/食品饮料';
+  if (n.includes('酒') || n.includes('白酒')) return '消费/白酒';
+  if (n.includes('教育')) return '教育';
+  return '其他';
+}
+
+// ======================== 默认数据 ========================
+const DEFAULT_ETFS = [
+  {code:"513310",name:"中韩半导体ETF",daily:0.94,ytd:133.37},
+  {code:"515050",name:"通信ETF华夏",daily:1.93,ytd:73.91},
+  {code:"515880",name:"通信ETF国泰",daily:0.69,ytd:69.52},
+  {code:"588200",name:"科创芯片ETF嘉",daily:1.28,ytd:61.83},
+  {code:"512480",name:"半导体ETF国联",daily:1.91,ytd:56.9},
+  {code:"159995",name:"芯片ETF华夏",daily:1.74,ytd:48.96},
+  {code:"562800",name:"稀有金属ETF嘉",daily:-0.52,ytd:23.98},
+  {code:"515220",name:"煤炭ETF国泰",daily:-1.47,ytd:17.41},
+  {code:"516150",name:"稀土ETF嘉实",daily:-1.0,ytd:14.03},
+  {code:"562500",name:"机器人ETF华夏",daily:0.0,ytd:12.07},
+  {code:"515790",name:"光伏ETF华泰柏",daily:-0.29,ytd:7.17},
+  {code:"512950",name:"央企改革ETF华",daily:0.97,ytd:6.75},
+  {code:"512400",name:"有色金属ETF南",daily:0.29,ytd:6.64},
+  {code:"516160",name:"新能源ETF南方",daily:-0.39,ytd:5.88},
+  {code:"515700",name:"新能源车ETF平",daily:-0.92,ytd:3.36},
+  {code:"516510",name:"云计算ETF易方",daily:-0.24,ytd:0.41},
+  {code:"515080",name:"中证红利ETF招",daily:-0.84,ytd:0.2},
+  {code:"512720",name:"计算机ETF国泰",daily:0.42,ytd:-1.0},
+  {code:"518880",name:"黄金ETF华安",daily:0.17,ytd:-3.62},
+  {code:"516970",name:"基建ETF广发",daily:-0.61,ytd:-3.88},
+  {code:"512670",name:"国防ETF鹏华",daily:1.17,ytd:-4.31},
+  {code:"512800",name:"银行ETF华宝",daily:-0.88,ytd:-4.62},
+  {code:"159996",name:"家电ETF国泰",daily:-0.2,ytd:-6.07},
+  {code:"512660",name:"军工ETF国泰",daily:1.34,ytd:-6.48},
+  {code:"512880",name:"证券ETF国泰",daily:-0.18,ytd:-10.82},
+  {code:"512000",name:"券商ETF华宝",daily:-0.19,ytd:-10.88},
+  {code:"159647",name:"中药ETF鹏华",daily:-1.41,ytd:-13.61},
+  {code:"512170",name:"医疗ETF华宝",daily:-0.34,ytd:-14.12},
+  {code:"515210",name:"钢铁ETF国泰",daily:-1.85,ytd:-15.92},
+  {code:"516820",name:"医疗创新ETF平",daily:-0.66,ytd:-16.07},
+  {code:"512200",name:"房地产ETF南方",daily:-0.95,ytd:-16.81},
+  {code:"512980",name:"传媒ETF广发",daily:-1.8,ytd:-17.84},
+  {code:"515170",name:"食品饮料ETF华",daily:-1.32,ytd:-18.07},
+  {code:"516620",name:"影视ETF国泰",daily:-2.39,ytd:-19.09},
+  {code:"513360",name:"教育ETF博时",daily:-0.69,ytd:-19.96},
+  {code:"515230",name:"软件ETF国泰",daily:-0.97,ytd:-20.54},
+  {code:"512690",name:"酒ETF鹏华",daily:-1.91,ytd:-23.32},
+  {code:"516010",name:"游戏ETF国泰",daily:-1.9,ytd:-27.57},
+];
+DEFAULT_ETFS.forEach(e => e.sector = classifySector(e.name));
+
+let etfData = JSON.parse(JSON.stringify(DEFAULT_ETFS));
+let sortCol = 'daily', sortDir = 'desc';
+let dataSource = '默认';
+let dailyChart = null, ytdChart = null;
+
+// ======================== 尝试从扩展读取 ========================
+function tryLoadFromExtension() {
+  try {
+    chrome.storage?.local?.get(['aidinpan_etfs', 'last_update'], (result) => {
+      if (result?.aidinpan_etfs && result.aidinpan_etfs.length > 0) {
+        etfData = result.aidinpan_etfs.map(e => ({ ...e, sector: classifySector(e.name) }));
+        dataSource = '爱盯盘';
+        const age = result.last_update ? Math.round((Date.now() - result.last_update) / 1000) : 0;
+        const ageStr = age < 60 ? '刚刚' : age < 3600 ? `${Math.round(age/60)}分钟前` : `${Math.round(age/3600)}小时前`;
+        updateStatus(`${dataSource} · ${etfData.length}只ETF · ${ageStr}`);
+        renderCharts();
+        renderTable();
+        renderStats();
+        showToast('已从扩展读取最新数据');
+      } else {
+        showToast('扩展中暂无扫描数据，请先在爱盯盘页面安装并激活扩展');
+      }
+    });
+  } catch (e) {
+    showToast('无法连接扩展。请使用 Chrome 扩展版本，或手动导入 JSON 数据');
+  }
+}
+
+function updateStatus(msg) {
+  document.getElementById('statusLine').textContent = msg;
+}
+
+// ======================== 核心分析 ========================
+function analyzeSectors(data) {
+  const map = {};
+  data.forEach(e => {
+    if (!map[e.sector]) map[e.sector] = [];
+    map[e.sector].push(e);
+  });
+  return Object.entries(map).map(([sector, list]) => ({
+    sector, count: list.length,
+    avgDaily: +(list.reduce((s, x) => s + x.daily, 0) / list.length).toFixed(2),
+    avgYtd: +(list.reduce((s, x) => s + x.ytd, 0) / list.length).toFixed(2),
+  }));
+}
+
+function renderBadge(val) {
+  if (val > 0) return `<span class="badge up">+${val}%</span>`;
+  if (val < 0) return `<span class="badge down">${val}%</span>`;
+  return `<span class="badge flat">0%</span>`;
+}
+
+// ======================== ECharts 渲染 ========================
+function renderCharts() {
+  const sectors = analyzeSectors(etfData);
+  const dailySorted = [...sectors].sort((a, b) => a.avgDaily - b.avgDaily);
+  const ytdSorted = [...sectors].sort((a, b) => a.avgYtd - b.avgYtd);
+
+  const upColor = '#ff7b72';
+  const downColor = '#7ee787';
+  const gridColor = '#30363d';
+  const textColor = '#c9d1d9';
+
+  const commonOption = {
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'axis', axisPointer: { type: 'shadow' },
+      backgroundColor: '#161b22', borderColor: '#30363d', textStyle: { color: textColor },
+      formatter: function(params) {
+        const p = params[0];
+        return p.name + '<br/>' + p.seriesName + ': ' + (p.value >= 0 ? '+' : '') + p.value + '%';
+      }
+    },
+    grid: { left: '22%', right: '18%', top: '3%', bottom: '3%' },
+    xAxis: {
+      type: 'value', axisLabel: { color: '#8b949e', fontSize: 11, formatter: '{value}%' },
+      splitLine: { lineStyle: { color: gridColor, type: 'dashed' } },
+      axisLine: { lineStyle: { color: gridColor } }
+    },
+    yAxis: {
+      type: 'category', 
+      axisLabel: { color: textColor, fontSize: 11, interval: 0, width: 130, overflow: 'break' },
+      axisLine: { lineStyle: { color: gridColor } }, axisTick: { show: false }
+    },
+    animationDuration: 600
+  };
+
+  if (!dailyChart) dailyChart = echarts.init(document.getElementById('dailyChart'));
+  dailyChart.setOption({
+    ...commonOption,
+    yAxis: { ...commonOption.yAxis, data: dailySorted.map(s => s.sector) },
+    series: [{
+      name: '当日涨跌', type: 'bar',
+      data: dailySorted.map(s => ({
+        value: s.avgDaily,
+        itemStyle: { color: s.avgDaily >= 0 ? upColor : downColor, borderRadius: 3 }
+      })),
+      label: {
+        show: true, position: 'right', color: textColor, fontSize: 11, fontWeight: 'bold',
+        formatter: function(p) {
+          const s = dailySorted[p.dataIndex];
+          return (p.value >= 0 ? '+' : '') + p.value + '%  (' + s.count + '只)';
+        }
+      },
+      barWidth: '55%'
+    }]
+  }, true);
+
+  if (!ytdChart) ytdChart = echarts.init(document.getElementById('ytdChart'));
+  ytdChart.setOption({
+    ...commonOption,
+    grid: { left: '22%', right: '22%', top: '3%', bottom: '3%' },
+    yAxis: { ...commonOption.yAxis, data: ytdSorted.map(s => s.sector) },
+    series: [{
+      name: '年度涨跌', type: 'bar',
+      data: ytdSorted.map(s => ({
+        value: s.avgYtd,
+        itemStyle: { color: s.avgYtd >= 0 ? upColor : downColor, borderRadius: 3 }
+      })),
+      label: {
+        show: true, position: 'right', color: textColor, fontSize: 11, fontWeight: 'bold',
+        formatter: function(p) {
+          const s = ytdSorted[p.dataIndex];
+          return (p.value >= 0 ? '+' : '') + p.value + '%  (' + s.count + '只)';
+        }
+      },
+      barWidth: '55%'
+    }]
+  }, true);
+}
+
+// ======================== 表格和统计 ========================
+function renderTable() {
+  let sorted = [...etfData];
+  sorted.sort((a, b) => {
+    if (typeof a[sortCol] === 'number') return sortDir === 'asc' ? a[sortCol] - b[sortCol] : b[sortCol] - a[sortCol];
+    return sortDir === 'asc' ? a[sortCol].localeCompare(b[sortCol]) : b[sortCol].localeCompare(a[sortCol]);
+  });
+  const tbody = document.getElementById('etfTableBody');
+  tbody.innerHTML = sorted.map(e => `
+    <tr>
+      <td><span class="etf-name">${e.name}</span></td>
+      <td><span class="etf-code">${e.code}</span></td>
+      <td><span class="sector-tag">${e.sector}</span></td>
+      <td>${renderBadge(e.daily)}</td>
+      <td>${renderBadge(e.ytd)}</td>
+    </tr>
+  `).join('');
+
+  document.querySelectorAll('.etf-table th span').forEach(el => el.className = 'sort-arrow');
+  const idx = ['name','code','sector','daily','ytd'].indexOf(sortCol);
+  if (idx >= 0) {
+    document.querySelectorAll('.etf-table th span')[idx].className = sortDir === 'asc' ? 'sort-asc' : 'sort-desc';
+  }
+}
+
+function renderStats() {
+  const up = etfData.filter(e => e.daily > 0).length;
+  const down = etfData.filter(e => e.daily < 0).length;
+  const flat = etfData.length - up - down;
+  const avgDaily = (etfData.reduce((s, x) => s + x.daily, 0) / etfData.length).toFixed(2);
+  const avgYtd = (etfData.reduce((s, x) => s + x.ytd, 0) / etfData.length).toFixed(2);
+  document.getElementById('statsPanel').innerHTML = `
+    <div class="stat-item"><div class="stat-value" style="color:#ff7b72">${up}</div><div class="stat-label">上涨</div></div>
+    <div class="stat-item"><div class="stat-value" style="color:#7ee787">${down}</div><div class="stat-label">下跌</div></div>
+    <div class="stat-item"><div class="stat-value" style="color:#8b949e">${flat}</div><div class="stat-label">平盘</div></div>
+    <div class="stat-item"><div class="stat-value" style="color:#58a6ff">${avgDaily}%</div><div class="stat-label">平均涨跌</div></div>
+    <div class="stat-item"><div class="stat-value" style="color:#d2a8ff">${avgYtd}%</div><div class="stat-label">平均年度</div></div>
+    <div class="stat-item"><div class="stat-value" style="color:#e6edf3">${etfData.length}</div><div class="stat-label">ETF总数</div></div>
+  `;
+}
+
+function refreshData() {
+  updateStatus('正在获取实时数据...');
+  fetchETFData().then(etfs => {
+    if (etfs && etfs.length > 0) {
+      etfData = etfs.map(e => ({ ...e, sector: classifySector(e.name) }));
+      dataSource = '腾讯财经';
+      updateStatus(`${dataSource} · ${etfData.length}只ETF · 刚刚`);
+      renderCharts();
+      renderTable();
+      renderStats();
+      showToast('数据已刷新');
+      // 尝试保存到扩展 storage
+      try {
+        chrome.storage?.local?.set({
+          aidinpan_etfs: etfs,
+          last_update: Date.now(),
+          source: 'tencent_api'
+        });
+      } catch (e) {}
+    } else {
+      updateStatus('获取数据失败');
+      showToast('获取失败');
+    }
+  }).catch(e => {
+    console.error(e);
+    updateStatus('刷新失败: ' + e.message);
+    showToast('刷新失败');
+  });
+}
+
+function sortTable(col) {
+  if (sortCol === col) sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+  else { sortCol = col; sortDir = 'desc'; }
+  renderTable();
+}
+
+// ======================== 编辑功能 ========================
+function toggleEditor() {
+  const el = document.getElementById('editor');
+  if (el.style.display === 'block') { el.style.display = 'none'; return; }
+  document.getElementById('dataEditor').value = JSON.stringify(etfData, null, 2);
+  el.style.display = 'block';
+}
+function saveData() {
+  try {
+    const v = JSON.parse(document.getElementById('dataEditor').value);
+    if (!Array.isArray(v)) throw new Error('必须是数组');
+    etfData = v.map(e => ({ ...e, sector: classifySector(e.name) }));
+    renderCharts();
+    renderTable();
+    renderStats();
+    document.getElementById('editor').style.display = 'none';
+    showToast('数据已保存');
+  } catch (e) {
+    alert('JSON格式错误: ' + e.message);
+  }
+}
+function loadDefault() {
+  if (!confirm('确定恢复默认数据？当前修改会丢失')) return;
+  etfData = JSON.parse(JSON.stringify(DEFAULT_ETFS));
+  document.getElementById('dataEditor').value = JSON.stringify(etfData, null, 2);
+  renderCharts();
+  renderTable();
+  renderStats();
+  showToast('已恢复默认数据');
+}
+function cancelEdit() { document.getElementById('editor').style.display = 'none'; }
+function exportData() {
+  const blob = new Blob([JSON.stringify(etfData, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = 'etf_data.json'; a.click();
+  URL.revokeObjectURL(url);
+  showToast('已导出 etf_data.json');
+}
+function importData() {
+  const file = document.getElementById('importFile').files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!Array.isArray(data)) throw new Error('必须是数组');
+      etfData = data.map(e => ({ ...e, sector: classifySector(e.name) }));
+      renderCharts();
+      renderTable();
+      renderStats();
+      showToast('数据已导入');
+    } catch (err) {
+      alert('导入失败: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+function showToast(msg) {
+  const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+window.addEventListener('resize', () => { dailyChart?.resize(); ytdChart?.resize(); });
+
+updateStatus('默认数据 · 38只ETF');
+renderCharts();
+renderTable();
+renderStats();
+
+// 尝试自动从扩展读取（或直接刷新）
+setTimeout(() => {
+  let initDone = false;
+  function doInit() {
+    if (initDone) return;
+    initDone = true;
+    refreshData();
+  }
+  try {
+    if (typeof chrome !== 'undefined' && chrome.storage?.local?.get) {
+      chrome.storage.local.get(['aidinpan_etfs', 'last_update', 'source'], (result) => {
+        if (initDone) return;
+        initDone = true;
+        if (result?.aidinpan_etfs && result.aidinpan_etfs.length > 0) {
+          if (result.source !== 'tencent_api') {
+            refreshData();
+            return;
+          }
+          etfData = result.aidinpan_etfs.map(e => ({ ...e, sector: classifySector(e.name) }));
+          dataSource = result.source === 'tencent_api' ? '腾讯财经' : '爱盯盘';
+          const age = result.last_update ? Math.round((Date.now() - result.last_update) / 1000) : 0;
+          const ageStr = age < 60 ? '刚刚' : age < 3600 ? `${Math.round(age/60)}分钟前` : `${Math.round(age/3600)}小时前`;
+          updateStatus(`${dataSource} · ${etfData.length}只ETF · ${ageStr}`);
+          renderCharts();
+          renderTable();
+          renderStats();
+        } else {
+          refreshData();
+        }
+      });
+      setTimeout(doInit, 3000);
+    } else {
+      doInit();
+    }
+  } catch (e) {
+    doInit();
+  }
+}, 500);
+</script>
+</body>
+</html>
