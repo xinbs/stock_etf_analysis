@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-HOST="${1:-192.168.31.218}"
+HOST="${1:-xinbs@192.168.31.218}"
 REMOTE_DIR="${2:-~/stock_analysis}"
 
 cd "$(dirname "$0")/.."
