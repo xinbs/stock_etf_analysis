@@ -380,6 +380,7 @@ $('refreshBtn').addEventListener('click', async () => {
     setActionStatus(formatRefreshResult(result), result?.success ? (Number(result.failed || 0) > 0 ? 'warn' : Number(result.changed || 0) > 0 ? 'ok' : 'warn') : 'bad');
     $('refreshBtn').textContent = '更新页面中...';
     await load();
+    await refreshUpdateStatus();
   } catch (e) {
     setActionStatus(`刷新失败：${e.message}`, 'bad');
     await load().catch(() => {});
@@ -415,6 +416,71 @@ window.addEventListener('resize', () => {
   chart?.resize();
   rankChart?.resize();
 });
+
+// ---- 自动更新状态（精简行 + 详情弹窗）----
+function fmtLogTime(iso) {
+  if (!iso) return '-';
+  const d = new Date(iso);
+  return d.toLocaleTimeString('zh-CN', { hour12: false });
+}
+
+function logSummaryText(log) {
+  const result = log.success ? '成功' : '失败';
+  const snap = `快照 ${log.snapshot_saved}/${log.snapshot_expected || log.snapshot_saved}`;
+  const failText = log.snapshot_failed > 0 ? `，失败 ${log.snapshot_failed}` : '';
+  const intra = log.slice_count
+    ? `日内分片 ${(log.slice_index ?? 0) + 1}/${log.slice_count}（+${log.intraday_saved} 条${log.intraday_failed > 0 ? `，失败 ${log.intraday_failed}` : ''}）`
+    : `日内 +${log.intraday_saved} 条`;
+  return `${result} · ${snap}${failText} · ${intra}`;
+}
+
+async function refreshUpdateStatus() {
+  try {
+    const data = await api('/api/fund-flows/update-log?limit=20');
+    const latest = data.logs?.[0];
+    const dot = $('autoDot');
+    if (!latest) {
+      dot.className = 'dot';
+      $('autoText').textContent = data.trading
+        ? '交易时段，自动更新进行中（每 10 分钟一轮）'
+        : '当前非交易时段，自动更新已暂停，展示缓存数据';
+      return;
+    }
+    const kindLabel = latest.kind === 'manual' ? '手动' : '自动';
+    dot.className = `dot ${latest.success ? (latest.snapshot_failed > 0 ? 'warn' : 'ok') : 'bad'}`;
+    const paused = data.trading ? '' : '（非交易时段，自动更新暂停）';
+    $('autoText').textContent = `最近${kindLabel}更新 ${fmtLogTime(latest.started_at)}：${logSummaryText(latest)} ${paused}`;
+    // 详情弹窗内容
+    $('updateModalMeta').textContent = `服务器时间 ${new Date(data.serverTime).toLocaleString('zh-CN', { hour12: false })} · ${data.trading ? '交易时段，每 10 分钟自动更新一轮' : '当前非交易时段，自动更新暂停'}`;
+    $('updateLogBody').innerHTML = (data.logs || []).map(log => `
+      <tr>
+        <td>${new Date(log.started_at).toLocaleString('zh-CN', { hour12: false })}</td>
+        <td>${log.kind === 'manual' ? '手动' : '自动'}</td>
+        <td class="${log.success ? 'down' : 'up'}">${log.success ? '成功' : '失败'}</td>
+        <td>${log.snapshot_saved}/${log.snapshot_expected || log.snapshot_saved}${log.snapshot_failed > 0 ? `（失败 ${log.snapshot_failed}）` : ''}</td>
+        <td>${log.changed || 0}</td>
+        <td>${log.slice_count ? `分片 ${(log.slice_index ?? 0) + 1}/${log.slice_count}，` : ''}+${log.intraday_saved} 条${log.intraday_failed > 0 ? `，失败 ${log.intraday_failed}` : ''}</td>
+        <td>${log.duration_ms != null ? (log.duration_ms / 1000).toFixed(1) + 's' : '-'}</td>
+        <td class="muted">${log.error || ''}</td>
+      </tr>`).join('');
+  } catch (e) {
+    $('autoText').textContent = '自动更新状态获取失败：' + e.message;
+    $('autoDot').className = 'dot bad';
+  }
+}
+
+$('updateDetailBtn').addEventListener('click', async () => {
+  await refreshUpdateStatus();
+  $('updateModal').classList.add('show');
+});
+$('updateModalClose').addEventListener('click', () => $('updateModal').classList.remove('show'));
+$('updateModal').addEventListener('click', e => {
+  if (e.target === $('updateModal')) $('updateModal').classList.remove('show');
+});
+
+refreshUpdateStatus();
+setInterval(refreshUpdateStatus, 60 * 1000);
+
 load().catch(e => {
   $('subtitle').textContent = '加载失败：' + e.message;
   console.error(e);

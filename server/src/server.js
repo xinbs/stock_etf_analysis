@@ -182,6 +182,26 @@ async function getFundFlowDb() {
       updated_at TEXT NOT NULL
     );
 
+    CREATE TABLE IF NOT EXISTS fund_flow_update_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      duration_ms INTEGER,
+      success INTEGER NOT NULL DEFAULT 0,
+      snapshot_saved INTEGER DEFAULT 0,
+      snapshot_expected INTEGER DEFAULT 0,
+      snapshot_failed INTEGER DEFAULT 0,
+      changed INTEGER DEFAULT 0,
+      intraday_saved INTEGER DEFAULT 0,
+      intraday_failed INTEGER DEFAULT 0,
+      slice_index INTEGER,
+      slice_count INTEGER,
+      error TEXT,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_fund_flow_update_log_time ON fund_flow_update_log(started_at);
+
     CREATE TABLE IF NOT EXISTS board_fund_flow_reference (
       provider TEXT NOT NULL,
       board_type TEXT NOT NULL,
@@ -406,9 +426,34 @@ async function updateEtfFundFlows(options = {}) {
   return fundFlowInflight;
 }
 
+// 记录每次资金流更新（自动/手动），供前端详情弹窗查询；只保留最近 200 条
+function logFundFlowUpdate(db, entry) {
+  try {
+    db.prepare(`
+      INSERT INTO fund_flow_update_log
+        (provider, kind, started_at, duration_ms, success, snapshot_saved, snapshot_expected,
+         snapshot_failed, changed, intraday_saved, intraday_failed, slice_index, slice_count, error)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      entry.provider, entry.kind, entry.startedAt, entry.durationMs ?? null,
+      entry.success ? 1 : 0, entry.snapshotSaved ?? 0, entry.snapshotExpected ?? 0,
+      entry.snapshotFailed ?? 0, entry.changed ?? 0, entry.intradaySaved ?? 0,
+      entry.intradayFailed ?? 0, entry.sliceIndex ?? null, entry.sliceCount ?? null,
+      entry.error || null
+    );
+    db.prepare(`
+      DELETE FROM fund_flow_update_log WHERE id NOT IN (
+        SELECT id FROM fund_flow_update_log ORDER BY id DESC LIMIT 200
+      )
+    `).run();
+  } catch (e) {
+    console.warn('[fund-flow] log update failed:', e.message);
+  }
+}
+
 async function doUpdateEtfFundFlows(options = {}) {
   // intradaySlices>1 时日内逐 ETF 数据按分片轮换更新，把请求量摊到多次调度里
-  const { intraday = true, intradaySlices = 1 } = options;
+  const { intraday = true, intradaySlices = 1, kind = 'auto' } = options;
   const started = Date.now();
   const provider = 'eastmoney_etf';
   const db = await getFundFlowDb();
@@ -450,7 +495,7 @@ async function doUpdateEtfFundFlows(options = {}) {
       db.exec('ROLLBACK');
       throw e;
     }
-    let intraday = { skipped: true, saved: 0, failed: 0 };
+    let intradayResult = { skipped: true, saved: 0, failed: 0 };
     if (intraday) {
       const universe = etfUniverse();
       const sliceCount = Math.max(1, Math.min(Number(intradaySlices) || 1, universe.length));
@@ -458,9 +503,9 @@ async function doUpdateEtfFundFlows(options = {}) {
       const sliceCodes = sliceCount > 1
         ? universe.filter((_, i) => i % sliceCount === sliceIndex).map(e => e.marketCode)
         : null;
-      intraday = await updateEtfFundFlowIntraday(300, sliceCodes).catch(e => ({ success: false, error: e.message, saved: 0 }));
-      intraday.sliceCount = sliceCount;
-      intraday.sliceIndex = sliceIndex;
+      intradayResult = await updateEtfFundFlowIntraday(300, sliceCodes).catch(e => ({ success: false, error: e.message, saved: 0 }));
+      intradayResult.sliceCount = sliceCount;
+      intradayResult.sliceIndex = sliceIndex;
     }
     const missing = Math.max(0, snapshot.expected - rows.length);
     const partialError = snapshot.errors.length ? `${missing} ETF failed: ${snapshot.errors[0].error}` : null;
@@ -471,7 +516,7 @@ async function doUpdateEtfFundFlows(options = {}) {
       rowCount: rows.length,
       error: partialError
     });
-    return {
+    const result = {
       success: true,
       saved: rows.length,
       expected: snapshot.expected,
@@ -483,10 +528,35 @@ async function doUpdateEtfFundFlows(options = {}) {
       capturedAt: snapshot.capturedAt,
       tradeDate: snapshot.tradeDate,
       durationMs: Date.now() - started,
-      intraday
+      intraday: intradayResult
     };
+    logFundFlowUpdate(db, {
+      provider,
+      kind,
+      startedAt: new Date(started).toISOString(),
+      durationMs: result.durationMs,
+      success: true,
+      snapshotSaved: result.saved,
+      snapshotExpected: result.expected,
+      snapshotFailed: result.failed,
+      changed: result.changed,
+      intradaySaved: intradayResult.saved || 0,
+      intradayFailed: intradayResult.failed || 0,
+      sliceIndex: intradayResult.sliceIndex ?? null,
+      sliceCount: intradayResult.sliceCount ?? null,
+      error: partialError
+    });
+    return result;
   } catch (e) {
     setProviderStatus(db, provider, { success: false, at: new Date().toISOString(), durationMs: Date.now() - started, rowCount: 0, error: e.message });
+    logFundFlowUpdate(db, {
+      provider,
+      kind,
+      startedAt: new Date(started).toISOString(),
+      durationMs: Date.now() - started,
+      success: false,
+      error: e.message
+    });
     return { success: false, error: e.message };
   }
 }
@@ -921,6 +991,23 @@ async function getFundFlowTimeline(sector, period = 'intraday') {
 async function getFundFlowSourceStatus() {
   const db = await getFundFlowDb();
   return { success: true, status: db.prepare('SELECT * FROM fund_flow_provider_status ORDER BY provider').all() };
+}
+
+async function getFundFlowUpdateLog(limit = 20) {
+  const db = await getFundFlowDb();
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 20, 100));
+  const logs = db.prepare(`
+    SELECT * FROM fund_flow_update_log ORDER BY id DESC LIMIT ?
+  `).all(safeLimit);
+  const status = db.prepare('SELECT * FROM fund_flow_provider_status ORDER BY provider').all();
+  return {
+    success: true,
+    trading: isTradingTime(),
+    tradingDay: isTradingDay(),
+    serverTime: new Date().toISOString(),
+    logs,
+    status
+  };
 }
 
 function hasValidOhlc(r) {
@@ -1892,7 +1979,7 @@ async function handleMessage(msg) {
       return fetchAndStoreETFHistory();
     case 'updateEtfFundFlows':
       // 手动刷新同样走分片轮换（快照全量 + 1/4 日内分片），非交易时段自动跳过外部请求
-      return updateEtfFundFlows({ intradaySlices: 4, force: !!msg.force });
+      return updateEtfFundFlows({ intradaySlices: 4, force: !!msg.force, kind: 'manual' });
     case 'backfillEtfFundFlows':
       return backfillEtfFundFlows(Number(msg.limit || 80), msg.marketCodes);
     case 'updateDailyHistory':
@@ -1963,6 +2050,7 @@ async function route(req, res) {
     if (url.pathname === '/api/fund-flows/etfs') return json(res, await getFundFlowEtfs(url.searchParams.get('sector'), url.searchParams.get('period') || 'day'));
     if (url.pathname === '/api/fund-flows/timeline') return json(res, await getFundFlowTimeline(url.searchParams.get('sector'), url.searchParams.get('period') || 'intraday'));
     if (url.pathname === '/api/fund-flows/source-status') return json(res, await getFundFlowSourceStatus());
+    if (url.pathname === '/api/fund-flows/update-log') return json(res, await getFundFlowUpdateLog(url.searchParams.get('limit') || 20));
     if (url.pathname === '/api/message' && req.method === 'POST') return json(res, await handleMessage(await readBody(req)));
     if (url.pathname === '/api/proxy') {
       const target = url.searchParams.get('url');

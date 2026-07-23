@@ -53,6 +53,20 @@
     #flowChart { height: 360px; margin-top: 8px; }
     #rankChart { height: 640px; }
     .status { margin-top: 12px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+    .auto-line { display: flex; justify-content: center; align-items: center; gap: 8px; font-size: 12px; color: #8b949e; margin: -6px 0 12px; flex-wrap: wrap; }
+    .auto-line .dot { width: 8px; height: 8px; border-radius: 50%; background: #30363d; display: inline-block; }
+    .auto-line .dot.ok { background: #7ee787; }
+    .auto-line .dot.warn { background: #d29922; }
+    .auto-line .dot.bad { background: #ff7b72; }
+    .auto-line .detail-link { color: #58a6ff; cursor: pointer; text-decoration: underline; }
+    .modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: none; align-items: center; justify-content: center; z-index: 100; }
+    .modal-mask.show { display: flex; }
+    .modal { background: #161b22; border: 1px solid #30363d; border-radius: 10px; width: min(860px, 92vw); max-height: 80vh; overflow: auto; padding: 16px; }
+    .modal h3 { color: #e6edf3; font-size: 15px; margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; }
+    .modal h3 .close { cursor: pointer; color: #8b949e; font-size: 20px; line-height: 1; }
+    .modal h3 .close:hover { color: #e6edf3; }
+    .modal table { font-size: 12px; }
+    .modal td, .modal th { white-space: normal; }
     @media (max-width: 1180px) { .layout, .summary, .status { grid-template-columns: 1fr; } }
   </style>
 </head>
@@ -65,6 +79,24 @@
     <button class="btn2" id="refreshBtn">刷新资金流</button>
     <button class="btn3" id="backfillBtn">补历史资金流</button>
     <div class="action-status" id="actionStatus"></div>
+  </div>
+  <div class="auto-line" id="autoLine">
+    <span class="dot" id="autoDot"></span>
+    <span id="autoText">自动更新状态加载中...</span>
+    <span class="detail-link" id="updateDetailBtn">更新详情</span>
+  </div>
+
+  <div class="modal-mask" id="updateModal">
+    <div class="modal">
+      <h3>资金流更新详情 <span class="close" id="updateModalClose">×</span></h3>
+      <div class="muted" id="updateModalMeta" style="font-size:12px;margin-bottom:8px"></div>
+      <table>
+        <thead>
+          <tr><th>时间</th><th>触发</th><th>结果</th><th>快照</th><th>变化</th><th>日内</th><th>耗时</th><th>错误</th></tr>
+        </thead>
+        <tbody id="updateLogBody"></tbody>
+      </table>
+    </div>
   </div>
 
   <section class="summary">
