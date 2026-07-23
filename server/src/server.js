@@ -43,6 +43,35 @@ function today() {
   return fmtDate(new Date());
 }
 
+// ---- A股交易时段判断（固定按 Asia/Shanghai，避免容器/宿主机时区差异）----
+function shanghaiNow() {
+  const now = new Date();
+  const utcMs = now.getTime() + now.getTimezoneOffset() * 60000;
+  return new Date(utcMs + 8 * 3600000);
+}
+
+function isTradingDay(d = shanghaiNow()) {
+  const w = d.getDay();
+  return w >= 1 && w <= 5; // 法定节假日未内置，节假日会少量空跑但不限流
+}
+
+// 交易时段（含集合竞价与收盘后 10 分钟缓冲）：09:25-11:35、12:55-15:10
+// 收盘后东财实时资金流接口拉不到有效数据，非交易时段一律不请求外部接口
+function isTradingTime(d = shanghaiNow()) {
+  if (!isTradingDay(d)) return false;
+  const m = d.getHours() * 60 + d.getMinutes();
+  return (m >= 565 && m <= 695) || (m >= 775 && m <= 910);
+}
+
+function tradingTimeSkipResult() {
+  return {
+    success: true,
+    skipped: true,
+    reason: '当前非 A 股交易时段（或已收盘），实时资金流已定型，不再请求外部接口，页面展示缓存数据',
+    tradeDate: today()
+  };
+}
+
 async function readBody(req) {
   const chunks = [];
   for await (const c of req) chunks.push(c);
@@ -365,7 +394,21 @@ async function fetchEastmoneyEtfSnapshot() {
   return { rows, errors, expected: universe.length, capturedAt, tradeDate };
 }
 
-async function updateEtfFundFlows() {
+// 资金流更新入口：交易时段外直接跳过；并发调用共享同一个 in-flight 任务，避免重复打满接口
+let fundFlowInflight = null;
+let intradayRotation = 0;
+
+async function updateEtfFundFlows(options = {}) {
+  const { force = false } = options;
+  if (!force && !isTradingTime()) return tradingTimeSkipResult();
+  if (fundFlowInflight) return fundFlowInflight;
+  fundFlowInflight = doUpdateEtfFundFlows(options).finally(() => { fundFlowInflight = null; });
+  return fundFlowInflight;
+}
+
+async function doUpdateEtfFundFlows(options = {}) {
+  // intradaySlices>1 时日内逐 ETF 数据按分片轮换更新，把请求量摊到多次调度里
+  const { intraday = true, intradaySlices = 1 } = options;
   const started = Date.now();
   const provider = 'eastmoney_etf';
   const db = await getFundFlowDb();
@@ -407,7 +450,18 @@ async function updateEtfFundFlows() {
       db.exec('ROLLBACK');
       throw e;
     }
-    const intraday = await updateEtfFundFlowIntraday(300).catch(e => ({ success: false, error: e.message, saved: 0 }));
+    let intraday = { skipped: true, saved: 0, failed: 0 };
+    if (intraday) {
+      const universe = etfUniverse();
+      const sliceCount = Math.max(1, Math.min(Number(intradaySlices) || 1, universe.length));
+      const sliceIndex = (intradayRotation++) % sliceCount;
+      const sliceCodes = sliceCount > 1
+        ? universe.filter((_, i) => i % sliceCount === sliceIndex).map(e => e.marketCode)
+        : null;
+      intraday = await updateEtfFundFlowIntraday(300, sliceCodes).catch(e => ({ success: false, error: e.message, saved: 0 }));
+      intraday.sliceCount = sliceCount;
+      intraday.sliceIndex = sliceIndex;
+    }
     const missing = Math.max(0, snapshot.expected - rows.length);
     const partialError = snapshot.errors.length ? `${missing} ETF failed: ${snapshot.errors[0].error}` : null;
     setProviderStatus(db, provider, {
@@ -575,11 +629,15 @@ async function fetchEastmoneyIntradayFlow(etf, limit = 8) {
   }).filter(r => r.minuteTime && Number.isFinite(r.mainNet));
 }
 
-async function updateEtfFundFlowIntraday(limit = 300) {
+async function updateEtfFundFlowIntraday(limit = 300, marketCodes = null) {
   const db = await getFundFlowDb();
   let saved = 0;
   let failed = 0;
   const errors = [];
+  const universe = etfUniverse();
+  const targets = Array.isArray(marketCodes) && marketCodes.length
+    ? universe.filter(e => marketCodes.includes(e.marketCode))
+    : universe;
   const stmt = db.prepare(`
     INSERT INTO etf_fund_flow_intraday
       (provider, market_code, code, name, sector, trade_date, minute_time, main_net, small_net, mid_net,
@@ -593,7 +651,7 @@ async function updateEtfFundFlowIntraday(limit = 300) {
       super_large_net = excluded.super_large_net,
       updated_at = excluded.updated_at
   `);
-  for (const etf of etfUniverse()) {
+  for (const etf of targets) {
     try {
       let rows = null;
       let lastError = null;
@@ -1833,7 +1891,8 @@ async function handleMessage(msg) {
     case 'fetchETFHistory':
       return fetchAndStoreETFHistory();
     case 'updateEtfFundFlows':
-      return updateEtfFundFlows();
+      // 手动刷新同样走分片轮换（快照全量 + 1/4 日内分片），非交易时段自动跳过外部请求
+      return updateEtfFundFlows({ intradaySlices: 4, force: !!msg.force });
     case 'backfillEtfFundFlows':
       return backfillEtfFundFlows(Number(msg.limit || 80), msg.marketCodes);
     case 'updateDailyHistory':
@@ -1927,28 +1986,38 @@ async function route(req, res) {
 
 http.createServer(route).listen(PORT, HOST, () => {
   console.log(`stock-analysis server listening on http://${HOST}:${PORT}`);
+  const logFlowResult = tag => r => {
+    if (r?.skipped) return console.log(`[scheduler] ${tag} skipped: ${r.reason}`);
+    console.log(`[scheduler] ${tag} saved=${r.saved || 0} failed=${r.failed || 0} intradaySaved=${r.intraday?.saved || 0}`);
+  };
   setTimeout(() => {
     updateDailyHistory().then(r => {
       console.log(`[scheduler] daily history updated etf=${r.etfHistory.saved} ashare=${r.ashareHistory.saved}`);
     }).catch(e => console.warn('[scheduler] daily history update failed:', e.message));
-    backfillEtfFundFlows(8).then(r => {
-      console.log(`[scheduler] etf fund flow startup recent backfilled saved=${r.saved} failed=${r.failed}`);
-    }).catch(e => console.warn('[scheduler] etf fund flow backfill failed:', e.message));
-    updateEtfFundFlows().then(r => {
-      console.log(`[scheduler] etf fund flow updated saved=${r.saved || 0}`);
-    }).catch(e => console.warn('[scheduler] etf fund flow update failed:', e.message));
+    if (isTradingDay()) {
+      backfillEtfFundFlows(8).then(r => {
+        console.log(`[scheduler] etf fund flow startup recent backfilled saved=${r.saved} failed=${r.failed}`);
+      }).catch(e => console.warn('[scheduler] etf fund flow backfill failed:', e.message));
+    }
+    // 非交易时段 updateEtfFundFlows 内部自动跳过，不请求外部接口
+    updateEtfFundFlows({ intradaySlices: 2 }).then(logFlowResult('startup fund flow'))
+      .catch(e => console.warn('[scheduler] etf fund flow update failed:', e.message));
   }, 5000);
   setInterval(() => {
     updateDailyHistory().then(r => {
       console.log(`[scheduler] daily history updated etf=${r.etfHistory.saved} ashare=${r.ashareHistory.saved}`);
     }).catch(e => console.warn('[scheduler] daily history update failed:', e.message));
   }, 6 * 60 * 60 * 1000);
+  // 交易时段内每 10 分钟一轮：全量快照（10 个批量请求）+ 1/4 日内分片（10 个请求），
+  // 每只 ETF 的日内数据约 40 分钟轮更新一次，避免一次性打满东财接口
   setInterval(() => {
-    updateEtfFundFlows().then(r => {
-      console.log(`[scheduler] etf fund flow updated saved=${r.saved || 0}`);
-    }).catch(e => console.warn('[scheduler] etf fund flow update failed:', e.message));
-  }, 30 * 60 * 1000);
+    if (!isTradingTime()) return;
+    updateEtfFundFlows({ intradaySlices: 4 }).then(logFlowResult('etf fund flow'))
+      .catch(e => console.warn('[scheduler] etf fund flow update failed:', e.message));
+  }, 10 * 60 * 1000);
+  // 日级历史回补：仅交易日执行（周末无新数据），日线接口收盘后仍可用
   setInterval(() => {
+    if (!isTradingDay()) return;
     backfillEtfFundFlows(8).then(r => {
       console.log(`[scheduler] etf fund flow recent backfilled saved=${r.saved} failed=${r.failed}`);
     }).catch(e => console.warn('[scheduler] etf fund flow backfill failed:', e.message));

@@ -43,6 +43,7 @@ function setActionStatus(message, type = '') {
 }
 
 function formatRefreshResult(result) {
+  if (result?.skipped) return result.reason || '非交易时段，已跳过实时拉取，展示缓存数据';
   if (!result?.success) return `刷新失败：${result?.error || '未知错误'}`;
   const changed = Number(result.changed || 0);
   const saved = Number(result.saved || 0);
