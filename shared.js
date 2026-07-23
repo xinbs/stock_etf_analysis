@@ -14,6 +14,7 @@ export const ETF_CODES = {
   'sh512200': '房地产ETF南方', 'sh512980': '传媒ETF广发', 'sh515170': '食品饮料ETF华',
   'sh516620': '影视ETF国泰', 'sh513360': '教育ETF博时', 'sh515230': '软件ETF国泰',
   'sh512690': '酒ETF鹏华', 'sh516010': '游戏ETF国泰',
+  'sz159227': '航空航天ETF华夏', 'sz159992': '创新药ETF银华',
 };
 
 export const DEFAULT_YTD = {
@@ -27,6 +28,7 @@ export const DEFAULT_YTD = {
   'sh515210': -15.92, 'sh516820': -16.07, 'sh512200': -16.81, 'sh512980': -17.84,
   'sh515170': -18.07, 'sh516620': -19.09, 'sh513360': -19.96, 'sh515230': -20.54,
   'sh512690': -23.32, 'sh516010': -27.57,
+  'sz159227': -16.41, 'sz159992': 2.89,
 };
 
 export const INDEX_CODES = {
@@ -52,6 +54,7 @@ export function classifySector(name) {
   if (n.includes('新能源车')) return '新能源/汽车';
   if (n.includes('光伏')) return '新能源/光伏';
   if (n.includes('新能源')) return '新能源';
+  if (n.includes('创新药')) return '医药/创新药';
   if (n.includes('医疗创新')) return '医药/医疗';
   if (n.includes('医疗')) return '医药/医疗';
   if (n.includes('中药')) return '医药/中药';
@@ -70,6 +73,7 @@ export function classifySector(name) {
   if (n.includes('软件')) return '科技/软件';
   if (n.includes('红利')) return '红利/策略';
   if (n.includes('基建')) return '基建/建筑';
+  if (n.includes('航空') || n.includes('航天')) return '航天航空';
   if (n.includes('国防') || n.includes('军工')) return '国防/军工';
   if (n.includes('家电')) return '消费/家电';
   if (n.includes('钢铁')) return '钢铁/材料';

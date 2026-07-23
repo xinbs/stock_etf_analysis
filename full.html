@@ -60,6 +60,8 @@
     .form-row input { width: 100%; padding: 8px 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 14px; }
     .form-row input:focus { outline: none; border-color: #1f6feb; }
     .form-hint { font-size: 11px; color: #8b949e; margin-top: 4px; }
+    .dialog-footer { padding: 14px 18px; border-top: 1px solid #30363d; display: flex; gap: 10px; justify-content: flex-end; }
+    /* 指数卡片 */
     .index-section { margin-bottom: 16px; }
     .index-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 10px; }
     @media (max-width: 1200px) { .index-grid { grid-template-columns: repeat(3, 1fr); } }
@@ -86,14 +88,14 @@
     .index-chart-box { height: 320px; margin-top: 8px; }
     .index-tab-panel { display: none; }
     .index-tab-panel.active { display: block; }
+    .index-market-group { margin-bottom: 12px; }
+    .index-market-title { font-size: 13px; color: #58a6ff; font-weight: 600; margin-bottom: 8px; padding-left: 4px; border-left: 3px solid #58a6ff; }
   </style>
-</head>
-    .index-tab-panel.active { display: block; }
 </head>
 <body>
   <h1>ETF 板块大盘分析器（猪肉群专用）</h1>
   <div class="sub">实时 ETF 板块分析 · 腾讯财经数据源</div>
-  <div class="status-line" id="statusLine">加载中... (如果长时间空白，请按 F12 查看控制台)</div>
+  <div class="status-line" id="statusLine">加载中...</div>
 
   <div class="bar">
     <button class="btn" id="btnEdit">编辑数据</button>
@@ -194,6 +196,6 @@
 
   <div class="toast" id="toast"></div>
 
-  <script src="full.js?v=4"></script>
+  <script src="full.js?v=5"></script>
 </body>
 </html>

@@ -81,13 +81,13 @@ const INDEX_CODES = {
   'sz399001': { name: '深证成指', market: 'A股' },
   'sz399006': { name: '创业板指', market: 'A股' },
   'sh000688': { name: '科创50',   market: 'A股' },
-  'hkHSI':    { name: '恒生指数',   market: '港股' },
+  'hkHSI':    { name: '恒生指数',   market: '港股', historyKey: '恒生指数' },
   'hkHSTECH': { name: '恒生科技',   market: '港股' },
-  'usDJI':    { name: '道琼斯',     market: '美股' },
-  'usIXIC':   { name: '纳斯达克',   market: '美股' },
-  'usSPX':    { name: '标普500',    market: '美股' },
-  'N225':     { name: '日经225',    market: '日韩', eastmoney: '100.N225' },
-  'KS11':     { name: '韩国KOSPI',  market: '日韩', eastmoney: '100.KS11' },
+  'usDJI':    { name: '道琼斯',     market: '美股', useF54: true, historyKey: '道琼斯' },
+  'usIXIC':   { name: '纳斯达克',   market: '美股', useF54: true, historyKey: '纳斯达克' },
+  'us.INX':   { name: '标普500',    market: '美股', useF54: true, historyKey: '标普500' },
+  'N225':     { name: '日经225',    market: '日韩', eastmoney: '100.N225', sina: 'b_NKY', historyKey: '日经225' },
+  'KS11':     { name: '韩国KOSPI',  market: '日韩', eastmoney: '100.KS11', sina: 'b_KOSPI', historyKey: '韩国KOSPI' },
 };
 
 let indexData = [];
@@ -100,7 +100,7 @@ async function fetchIndexData() {
     const resp = await fetch(tencentUrl);
     const text = await resp.text();
     for (const line of text.trim().split(';').filter(l => l.trim())) {
-      const match = line.match(/v_([a-zA-Z0-9_]+)="(.*)"/);
+      const match = line.match(/v_([a-zA-Z0-9_\.]+)="(.*)"/);
       if (!match) continue;
       const key = match[1];
       const fields = match[2].split('~');
@@ -286,7 +286,7 @@ function renderCharts() {
         return p.name + '<br/>' + p.seriesName + ': ' + (p.value >= 0 ? '+' : '') + p.value + '%';
       }
     },
-    grid: { left: '22%', right: '18%', top: '3%', bottom: '3%' },
+    grid: { left: '26%', right: '18%', top: '3%', bottom: '3%' },
     xAxis: {
       type: 'value',
       axisLabel: { color: '#8b949e', fontSize: 11, formatter: '{value}%' },
@@ -295,7 +295,7 @@ function renderCharts() {
     },
     yAxis: {
       type: 'category',
-      axisLabel: { color: textColor, fontSize: 11, interval: 0, width: 130, overflow: 'break' },
+      axisLabel: { color: textColor, fontSize: 10, interval: 0, width: 150, overflow: 'break' },
       axisLine: { lineStyle: { color: gridColor } },
       axisTick: { show: false }
     },
@@ -327,7 +327,7 @@ function renderCharts() {
   if (!ytdChart) ytdChart = echarts.init(document.getElementById('ytdChart'));
   ytdChart.setOption({
     ...commonOption,
-    grid: { left: '22%', right: '22%', top: '3%', bottom: '3%' },
+    grid: { left: '26%', right: '22%', top: '3%', bottom: '3%' },
     yAxis: { ...commonOption.yAxis, data: ytdSorted.map(s => s.sector) },
     series: [{
       name: '年度涨跌',
@@ -445,7 +445,7 @@ function renderIndexChart() {
         return p.name + '<br/>涨跌: ' + sign + p.value.toFixed(2) + '%';
       }
     },
-    grid: { left: '22%', right: '15%', top: '5%', bottom: '5%' },
+    grid: { left: '26%', right: '15%', top: '5%', bottom: '5%' },
     xAxis: {
       type: 'value',
       axisLabel: { color: '#8b949e', fontSize: 11, formatter: '{value}%' },
@@ -455,7 +455,7 @@ function renderIndexChart() {
     yAxis: {
       type: 'category',
       data: sorted.map(s => s.name),
-      axisLabel: { color: textColor, fontSize: 11, interval: 0, width: 120, overflow: 'break' },
+      axisLabel: { color: textColor, fontSize: 10, interval: 0, width: 140, overflow: 'break' },
       axisLine: { lineStyle: { color: gridColor } },
       axisTick: { show: false }
     },
