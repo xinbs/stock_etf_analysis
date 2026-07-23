@@ -1,0 +1,3 @@
+[submodule "etf-sector-extension"]
+	path = etf-sector-extension
+	url = git@github.com:xinbs/stock_etf_analysis.git
