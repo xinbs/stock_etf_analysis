@@ -4,19 +4,6 @@ if (typeof echarts === 'undefined') {
   warn.style.cssText = 'position:fixed;top:0;left:0;right:0;padding:20px;background:#da3633;color:white;z-index:99999;font-size:16px;text-align:center;';
   warn.innerHTML = '<b>ECharts 加载失败</b> — 请检查 echarts.min.js 是否存在，或刷新扩展后重试。';
   document.body.appendChild(warn);
-} else {
-  // ECharts 加载成功，继续执行
-}
-
-// ======================== 诊断信息 ========================
-const diag = document.createElement('div');
-diag.id = 'diag';
-diag.style.cssText = 'position:fixed;top:0;left:0;right:0;padding:8px 16px;background:#238636;color:white;z-index:9999;font-size:13px;font-family:monospace;transition:background 0.3s;';
-diag.textContent = '✅ full.js v4 已执行 | ECharts: ' + (typeof echarts !== 'undefined' ? 'v' + echarts.version : '未加载') + ' | 初始化中...';
-document.body.insertBefore(diag, document.body.firstChild);
-function setDiag(msg, bg) {
-  diag.textContent = msg;
-  if (bg) diag.style.background = bg;
 }
 
 // ======================== 智能板块分类 ========================
@@ -25,7 +12,8 @@ function classifySector(name) {
   if (n.includes('新能源车')) return '新能源/汽车';
   if (n.includes('光伏')) return '新能源/光伏';
   if (n.includes('新能源')) return '新能源';
-  if (n.includes('医疗创新')) return '医药/医疗';
+  if (n.includes('创新药')) return '医药/创新药';
+  if (n.includes('医疗创新')) return '医药/医疗创新';
   if (n.includes('医疗')) return '医药/医疗';
   if (n.includes('中药')) return '医药/中药';
   if (n.includes('稀土')) return '有色金属/稀土';
@@ -43,6 +31,7 @@ function classifySector(name) {
   if (n.includes('软件')) return '科技/软件';
   if (n.includes('红利')) return '红利/策略';
   if (n.includes('基建')) return '基建/建筑';
+  if (n.includes('航空') || n.includes('航天')) return '航天航空';
   if (n.includes('国防') || n.includes('军工')) return '国防/军工';
   if (n.includes('家电')) return '消费/家电';
   if (n.includes('钢铁')) return '钢铁/材料';
@@ -69,6 +58,7 @@ const ETF_CODES = {
   'sh512200': '房地产ETF南方', 'sh512980': '传媒ETF广发', 'sh515170': '食品饮料ETF华',
   'sh516620': '影视ETF国泰', 'sh513360': '教育ETF博时', 'sh515230': '软件ETF国泰',
   'sh512690': '酒ETF鹏华', 'sh516010': '游戏ETF国泰',
+  'sz159227': '航空航天ETF华夏', 'sz159992': '创新药ETF银华',
 };
 
 const DEFAULT_YTD = {
@@ -82,23 +72,20 @@ const DEFAULT_YTD = {
   'sh515210': -15.92, 'sh516820': -16.07, 'sh512200': -16.81, 'sh512980': -17.84,
   'sh515170': -18.07, 'sh516620': -19.09, 'sh513360': -19.96, 'sh515230': -20.54,
   'sh512690': -23.32, 'sh516010': -27.57,
+  'sz159227': -16.41, 'sz159992': 2.89,
 };
 
 // ======================== 全球指数配置 ========================
 const INDEX_CODES = {
-  // A股
   'sh000001': { name: '上证指数', market: 'A股' },
   'sz399001': { name: '深证成指', market: 'A股' },
   'sz399006': { name: '创业板指', market: 'A股' },
   'sh000688': { name: '科创50',   market: 'A股' },
-  // 港股
   'hkHSI':    { name: '恒生指数',   market: '港股' },
   'hkHSTECH': { name: '恒生科技',   market: '港股' },
-  // 美股
   'usDJI':    { name: '道琼斯',     market: '美股' },
   'usIXIC':   { name: '纳斯达克',   market: '美股' },
   'usSPX':    { name: '标普500',    market: '美股' },
-  // 日韩（用东财 API）
   'N225':     { name: '日经225',    market: '日韩', eastmoney: '100.N225' },
   'KS11':     { name: '韩国KOSPI',  market: '日韩', eastmoney: '100.KS11' },
 };
@@ -106,11 +93,9 @@ const INDEX_CODES = {
 let indexData = [];
 
 async function fetchIndexData() {
-  // 1. 腾讯 API：A股 + 港股 + 美股
   const tencentKeys = Object.keys(INDEX_CODES).filter(k => !INDEX_CODES[k].eastmoney);
   const tencentUrl = `https://qt.gtimg.cn/q=${tencentKeys.join(',')}`;
   const results = [];
-
   try {
     const resp = await fetch(tencentUrl);
     const text = await resp.text();
@@ -127,18 +112,10 @@ async function fetchIndexData() {
       const prevClose = parseFloat(fields[4]);
       const change = price - prevClose;
       if (isNaN(price) || isNaN(changePct)) continue;
-      results.push({
-        code: key,
-        name: cfg.name,
-        market: cfg.market,
-        price: price,
-        change: change,
-        changePct: changePct,
-      });
+      results.push({ code: key, name: cfg.name, market: cfg.market, price, change, changePct });
     }
   } catch (e) { console.error('fetchIndexData tencent failed', e); }
 
-  // 2. 东财 API：日韩指数
   const eastmoneyKeys = Object.keys(INDEX_CODES).filter(k => INDEX_CODES[k].eastmoney);
   for (const key of eastmoneyKeys) {
     const cfg = INDEX_CODES[key];
@@ -153,17 +130,9 @@ async function fetchIndexData() {
       const changePct = d.f170 / 100;
       const change = price - prevClose;
       if (isNaN(price) || isNaN(changePct)) continue;
-      results.push({
-        code: key,
-        name: cfg.name,
-        market: cfg.market,
-        price: price,
-        change: change,
-        changePct: changePct,
-      });
+      results.push({ code: key, name: cfg.name, market: cfg.market, price, change, changePct });
     } catch (e) { console.error('fetchIndexData eastmoney failed', e); }
   }
-
   return results;
 }
 
@@ -196,13 +165,8 @@ async function fetchETFData() {
       const key = match[1];
       const fields = match[2].split('~');
       if (fields.length < 35) continue;
-      currentData[key] = {
-        code: fields[2],
-        currentPrice: parseFloat(fields[3]),
-        changePct: parseFloat(fields[32]),
-      };
+      currentData[key] = { code: fields[2], currentPrice: parseFloat(fields[3]), changePct: parseFloat(fields[32]) };
     }
-    // 获取年初收盘价并计算 YTD
     const year = new Date().getFullYear();
     const yearStartPromises = Object.keys(ETF_CODES).map(async (key) => {
       const price = await getYearStartPrice(key, year);
@@ -270,6 +234,8 @@ const DEFAULT = [
   {code:"515230",name:"软件ETF国泰",daily:-0.97,ytd:-20.54},
   {code:"512690",name:"酒ETF鹏华",daily:-1.91,ytd:-23.32},
   {code:"516010",name:"游戏ETF国泰",daily:-1.9,ytd:-27.57},
+  {code:"159227",name:"航空航天ETF华夏",daily:5.45,ytd:-16.41},
+  {code:"159992",name:"创新药ETF银华",daily:3.14,ytd:2.89},
 ];
 DEFAULT.forEach(e => e.sector = classifySector(e.name));
 
@@ -278,39 +244,10 @@ let sortCol = 'daily', sortDir = 'desc';
 let dataSource = '默认';
 let dailyChart = null, ytdChart = null, indexChart = null;
 
-// ======================== 从扩展 Storage 读取 ========================
-function loadFromStorage() {
-  try {
-    chrome.storage?.local?.get(['aidinpan_etfs', 'last_update', 'source'], (result) => {
-      if (result?.aidinpan_etfs && result.aidinpan_etfs.length > 0) {
-        // 如果数据来自旧版本（没有 source 或 source 不是 tencent_api），自动刷新
-        if (result.source !== 'tencent_api') {
-          console.log('检测到旧版数据，自动刷新...');
-          refreshAll();
-          return;
-        }
-        data = result.aidinpan_etfs.map(e => ({ ...e, sector: classifySector(e.name) }));
-        dataSource = result.source === 'tencent_api' ? '腾讯财经' : '爱盯盘';
-        const age = result.last_update ? Math.round((Date.now() - result.last_update) / 1000) : 0;
-        const ageStr = age < 60 ? '刚刚' : age < 3600 ? `${Math.round(age/60)}分钟前` : `${Math.round(age/3600)}小时前`;
-        updateStatus(`${dataSource} · ${data.length}只ETF · ${ageStr}`);
-        renderCharts();
-        renderTable();
-        renderStats();
-      } else {
-        // 没有数据，自动刷新
-        refreshAll();
-      }
-    });
-  } catch (e) {}
-}
-
 function updateStatus(msg) {
   document.getElementById('statusLine').textContent = msg;
-  setDiag(msg);
 }
 
-// ======================== 分析 ========================
 function analyze() {
   const m = {};
   data.forEach(e => { (m[e.sector] = m[e.sector] || []).push(e); });
@@ -327,12 +264,10 @@ function badge(v) {
   return '<span class="badge flat">0%</span>';
 }
 
-// ======================== ECharts 渲染 ========================
 function renderCharts() {
   const sectors = analyze();
   const dailySorted = [...sectors].sort((a,b) => a.avgDaily - b.avgDaily);
   const ytdSorted = [...sectors].sort((a,b) => a.avgYtd - b.avgYtd);
-
   const upColor = '#ff7b72';
   const downColor = '#7ee787';
   const gridColor = '#30363d';
@@ -360,20 +295,13 @@ function renderCharts() {
     },
     yAxis: {
       type: 'category',
-      axisLabel: { 
-        color: textColor, 
-        fontSize: 11,
-        interval: 0,
-        width: 130,
-        overflow: 'break'
-      },
+      axisLabel: { color: textColor, fontSize: 11, interval: 0, width: 130, overflow: 'break' },
       axisLine: { lineStyle: { color: gridColor } },
       axisTick: { show: false }
     },
     animationDuration: 600
   };
 
-  // 当日涨跌图
   if (!dailyChart) dailyChart = echarts.init(document.getElementById('dailyChart'));
   dailyChart.setOption({
     ...commonOption,
@@ -396,7 +324,6 @@ function renderCharts() {
     }]
   }, true);
 
-  // 年度涨跌图
   if (!ytdChart) ytdChart = echarts.init(document.getElementById('ytdChart'));
   ytdChart.setOption({
     ...commonOption,
@@ -421,27 +348,20 @@ function renderCharts() {
   }, true);
 }
 
-// ======================== 表格和统计 ========================
 function renderTable() {
   let sorted = [...data];
   sorted.sort((a,b) => {
     if (typeof a[sortCol] === 'number') return sortDir === 'asc' ? a[sortCol] - b[sortCol] : b[sortCol] - a[sortCol];
     return sortDir === 'asc' ? a[sortCol].localeCompare(b[sortCol]) : b[sortCol].localeCompare(a[sortCol]);
   });
-  document.getElementById('tbody').innerHTML = sorted.map((e, idx) => `
+  document.getElementById('tbody').innerHTML = sorted.map((e) => `
     <tr><td>${e.name}</td><td><span class="code">${e.code}</span></td>
     <td><span class="tag">${e.sector}</span></td><td>${badge(e.daily)}</td><td>${badge(e.ytd)}</td>
     <td><button class="del-btn" data-code="${e.code}">删除</button></td></tr>
   `).join('');
-
-  // 绑定删除按钮事件
   document.querySelectorAll('.del-btn').forEach(btn => {
-    btn.addEventListener('click', (ev) => {
-      const code = ev.target.dataset.code;
-      deleteETF(code);
-    });
+    btn.addEventListener('click', (ev) => { deleteETF(ev.target.dataset.code); });
   });
-
   ['name','code','sector','daily','ytd'].forEach(c => {
     const el = document.getElementById('th-'+c)?.querySelector('span');
     if (el) el.className = 'arrow';
@@ -466,7 +386,6 @@ function renderStats() {
   `;
 }
 
-// ======================== 全球指数渲染 ========================
 function renderIndexAll() {
   if (indexData.length === 0) {
     document.getElementById('indexSection').style.display = 'none';
@@ -478,15 +397,9 @@ function renderIndexAll() {
 }
 
 function renderIndexCards() {
-  // 按市场分组
   const groups = {};
-  indexData.forEach(idx => {
-    (groups[idx.market] = groups[idx.market] || []).push(idx);
-  });
-
-  // 市场顺序
+  indexData.forEach(idx => { (groups[idx.market] = groups[idx.market] || []).push(idx); });
   const marketOrder = ['A股', '港股', '美股', '日韩'];
-
   let html = '';
   for (const market of marketOrder) {
     const items = groups[market];
@@ -498,9 +411,7 @@ function renderIndexCards() {
       const up = idx.changePct >= 0;
       const cls = up ? 'up' : idx.changePct < 0 ? 'down' : 'flat';
       const sign = up ? '+' : '';
-      const priceStr = idx.price >= 10000
-        ? idx.price.toLocaleString('zh-CN', {maximumFractionDigits: 2})
-        : idx.price.toFixed(2);
+      const priceStr = idx.price >= 10000 ? idx.price.toLocaleString('zh-CN', {maximumFractionDigits: 2}) : idx.price.toFixed(2);
       const changeStr = Math.abs(idx.change).toFixed(2);
       html += `
         <div class="index-card">
@@ -516,26 +427,18 @@ function renderIndexCards() {
     }
     html += `</div></div>`;
   }
-
   document.getElementById('indexCards').innerHTML = html;
 }
 
 function renderIndexChart() {
   const sorted = [...indexData].sort((a, b) => a.changePct - b.changePct);
-  const upColor = '#ff7b72';
-  const downColor = '#7ee787';
-  const gridColor = '#30363d';
-  const textColor = '#c9d1d9';
-
+  const upColor = '#ff7b72', downColor = '#7ee787', gridColor = '#30363d', textColor = '#c9d1d9';
   if (!indexChart) indexChart = echarts.init(document.getElementById('indexChartBox'));
   indexChart.setOption({
     backgroundColor: 'transparent',
     tooltip: {
-      trigger: 'axis',
-      axisPointer: { type: 'shadow' },
-      backgroundColor: '#161b22',
-      borderColor: '#30363d',
-      textStyle: { color: textColor },
+      trigger: 'axis', axisPointer: { type: 'shadow' },
+      backgroundColor: '#161b22', borderColor: '#30363d', textStyle: { color: textColor },
       formatter: function(params) {
         const p = params[0];
         const sign = p.value >= 0 ? '+' : '';
@@ -557,19 +460,10 @@ function renderIndexChart() {
       axisTick: { show: false }
     },
     series: [{
-      name: '涨跌幅',
-      type: 'bar',
-      data: sorted.map(s => ({
-        value: s.changePct,
-        itemStyle: { color: s.changePct >= 0 ? upColor : downColor, borderRadius: 3 }
-      })),
-      label: {
-        show: true, position: 'right', color: textColor, fontSize: 11, fontWeight: 'bold',
-        formatter: function(p) {
-          const sign = p.value >= 0 ? '+' : '';
-          return sign + p.value.toFixed(2) + '%';
-        }
-      },
+      name: '涨跌幅', type: 'bar',
+      data: sorted.map(s => ({ value: s.changePct, itemStyle: { color: s.changePct >= 0 ? upColor : downColor, borderRadius: 3 } })),
+      label: { show: true, position: 'right', color: textColor, fontSize: 11, fontWeight: 'bold',
+        formatter: function(p) { const sign = p.value >= 0 ? '+' : ''; return sign + p.value.toFixed(2) + '%'; } },
       barWidth: '55%'
     }],
     animationDuration: 600
@@ -578,42 +472,25 @@ function renderIndexChart() {
 
 function refreshAll() {
   updateStatus('正在获取实时数据...');
-  setDiag('🔄 正在获取 ETF 和指数数据...', '#1f6feb');
   Promise.all([fetchETFData(), fetchIndexData()]).then(([etfs, indices]) => {
-    setDiag('✅ 数据获取完成，正在渲染...', '#238636');
     if (etfs && etfs.length > 0) {
       data = etfs;
       dataSource = '腾讯财经';
       updateStatus(`${dataSource} · ${data.length}只ETF · 刚刚`);
-      renderCharts();
-      renderTable();
-      renderStats();
-      // 指数数据
-      if (indices && indices.length > 0) {
-        indexData = indices;
-        renderIndexAll();
-      }
+      renderCharts(); renderTable(); renderStats();
+      if (indices && indices.length > 0) { indexData = indices; renderIndexAll(); }
       toast('数据已刷新');
-      setDiag(`✅ 数据已刷新 | ${data.length}只ETF ${indices ? indices.length : 0}个指数`, '#238636');
-      // 保存到 storage 供 popup 使用
       try {
-        chrome.storage?.local?.set({
-          aidinpan_etfs: etfs,
-          aidinpan_indices: indices,
-          last_update: Date.now(),
-          source: 'tencent_api'
-        });
+        chrome.storage?.local?.set({ aidinpan_etfs: etfs, aidinpan_indices: indices, last_update: Date.now(), source: 'tencent_api' });
       } catch (e) {}
     } else {
       updateStatus('获取数据失败');
       toast('获取失败');
-      setDiag('❌ 获取数据失败', '#da3633');
     }
   }).catch(e => {
     console.error(e);
     updateStatus('刷新失败: ' + e.message);
     toast('刷新失败');
-    setDiag('❌ 刷新失败: ' + e.message, '#da3633');
   });
 }
 
@@ -634,9 +511,7 @@ function saveEdit() {
     const v = JSON.parse(document.getElementById('ta').value);
     if (!Array.isArray(v)) throw new Error('必须是数组');
     data = v.map(e => ({...e, sector: classifySector(e.name)}));
-    renderCharts();
-    renderTable();
-    renderStats();
+    renderCharts(); renderTable(); renderStats();
     document.getElementById('editor').style.display = 'none';
     toast('数据已保存');
   } catch(e) { alert('JSON格式错误: ' + e.message); }
@@ -645,9 +520,7 @@ function restore() {
   if (!confirm('确定恢复默认数据？')) return;
   data = [...DEFAULT];
   document.getElementById('ta').value = JSON.stringify(data, null, 2);
-  renderCharts();
-  renderTable();
-  renderStats();
+  renderCharts(); renderTable(); renderStats();
   toast('已恢复默认');
 }
 function cancelEdit() { document.getElementById('editor').style.display = 'none'; }
@@ -659,131 +532,64 @@ function exportJson() {
 function deleteETF(code) {
   if (!confirm('确定删除 ' + code + '？')) return;
   data = data.filter(e => e.code !== code);
-  renderCharts();
-  renderTable();
-  renderStats();
+  renderCharts(); renderTable(); renderStats();
   updateStatus(`${dataSource} · ${data.length}只ETF`);
   toast('已删除 ' + code);
-  try {
-    chrome.storage?.local?.set({ aidinpan_etfs: data, last_update: Date.now(), source: 'tencent_api' });
-  } catch (e) {}
+  try { chrome.storage?.local?.set({ aidinpan_etfs: data, last_update: Date.now(), source: 'tencent_api' }); } catch (e) {}
 }
 
 async function addETF() {
   const codeInput = document.getElementById('addCode').value.trim().toLowerCase();
   const nameInput = document.getElementById('addName').value.trim();
-  if (!codeInput || !nameInput) {
-    toast('请填写代码和名称');
-    return;
-  }
-  // 验证格式
+  if (!codeInput || !nameInput) { toast('请填写代码和名称'); return; }
   const match = codeInput.match(/^(sh|sz)(\d{6})$/);
-  if (!match) {
-    toast('代码格式错误，如 sh510300');
-    return;
-  }
-  const prefix = match[1];
-  const num = match[2];
-  const key = prefix + num;
-
-  // 检查是否已存在
-  if (data.find(e => e.code === num)) {
-    toast('该 ETF 已存在');
-    return;
-  }
-
+  if (!match) { toast('代码格式错误，如 sh510300'); return; }
+  const prefix = match[1], num = match[2], key = prefix + num;
+  if (data.find(e => e.code === num)) { toast('该 ETF 已存在'); return; }
   const btn = document.getElementById('btnAdd');
-  btn.textContent = '获取中...';
-  btn.disabled = true;
-
+  btn.textContent = '获取中...'; btn.disabled = true;
   try {
-    // 获取当前价和日涨跌
     const url = `https://qt.gtimg.cn/q=${key}`;
     const resp = await fetch(url);
     const text = await resp.text();
     const lineMatch = text.match(/v_[a-z]{2}\d{6}="(.*)"/);
-    if (!lineMatch) {
-      toast('获取数据失败，请检查代码是否正确');
-      btn.textContent = '添加';
-      btn.disabled = false;
-      return;
-    }
+    if (!lineMatch) { toast('获取数据失败'); btn.textContent = '添加'; btn.disabled = false; return; }
     const fields = lineMatch[1].split('~');
-    if (fields.length < 35) {
-      toast('数据格式异常');
-      btn.textContent = '添加';
-      btn.disabled = false;
-      return;
-    }
+    if (fields.length < 35) { toast('数据格式异常'); btn.textContent = '添加'; btn.disabled = false; return; }
     const currentPrice = parseFloat(fields[3]);
     const changePct = parseFloat(fields[32]);
-
-    // 获取年初价计算 YTD
     const year = new Date().getFullYear();
     const yearStartPrice = await getYearStartPrice(key, year);
     let ytd = 0;
-    if (yearStartPrice && yearStartPrice > 0) {
-      ytd = ((currentPrice - yearStartPrice) / yearStartPrice) * 100;
-    }
-
-    const newETF = {
-      code: num,
-      name: nameInput,
-      sector: classifySector(nameInput),
-      daily: parseFloat(changePct.toFixed(2)),
-      ytd: parseFloat(ytd.toFixed(2)),
-    };
-
-    data.push(newETF);
-    renderCharts();
-    renderTable();
-    renderStats();
+    if (yearStartPrice && yearStartPrice > 0) ytd = ((currentPrice - yearStartPrice) / yearStartPrice) * 100;
+    data.push({ code: num, name: nameInput, sector: classifySector(nameInput), daily: parseFloat(changePct.toFixed(2)), ytd: parseFloat(ytd.toFixed(2)) });
+    renderCharts(); renderTable(); renderStats();
     updateStatus(`${dataSource} · ${data.length}只ETF`);
     toast('已添加 ' + nameInput);
-
-    // 清空输入框并关闭对话框
     document.getElementById('addCode').value = '';
     document.getElementById('addName').value = '';
     document.getElementById('addDialog').style.display = 'none';
-
-    // 保存到 storage
-    try {
-      chrome.storage?.local?.set({ aidinpan_etfs: data, last_update: Date.now(), source: 'tencent_api' });
-    } catch (e) {}
+    try { chrome.storage?.local?.set({ aidinpan_etfs: data, last_update: Date.now(), source: 'tencent_api' }); } catch (e) {}
   } catch (e) {
     console.error('addETF failed', e);
     toast('添加失败: ' + e.message);
   }
-
-  btn.textContent = '添加';
-  btn.disabled = false;
+  btn.textContent = '添加'; btn.disabled = false;
 }
 
 function toast(m) { const t = document.getElementById('toast'); t.textContent = m; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 2000); }
 
-// 窗口大小变化时重绘图表
-window.addEventListener('resize', () => {
-  dailyChart?.resize();
-  ytdChart?.resize();
-  indexChart?.resize();
-});
+window.addEventListener('resize', () => { dailyChart?.resize(); ytdChart?.resize(); indexChart?.resize(); });
 
 function renderDefault() {
   dataSource = '默认';
-  updateStatus('默认数据 · 38只ETF · 点击刷新获取最新');
-  renderCharts();
-  renderTable();
-  renderStats();
+  updateStatus('默认数据 · 40只ETF · 点击刷新获取最新');
+  renderCharts(); renderTable(); renderStats();
 }
 
-// 自动初始化：优先读缓存，否则直接刷新，有超时保护
+// 自动初始化：优先读缓存，否则直接刷新
 setTimeout(() => {
   let initDone = false;
-  function doInit() {
-    if (initDone) return;
-    initDone = true;
-    refreshAll();
-  }
   try {
     if (typeof chrome !== 'undefined' && chrome.storage?.local?.get) {
       chrome.storage.local.get(['aidinpan_etfs', 'aidinpan_indices', 'last_update', 'source'], (result) => {
@@ -795,42 +601,24 @@ setTimeout(() => {
           const age = result.last_update ? Math.round((Date.now() - result.last_update) / 1000) : 0;
           const ageStr = age < 60 ? '刚刚' : age < 3600 ? `${Math.round(age/60)}分钟前` : `${Math.round(age/3600)}小时前`;
           updateStatus(`${dataSource} · ${data.length}只ETF · ${ageStr}`);
-          renderCharts();
-          renderTable();
-          renderStats();
-          if (result?.aidinpan_indices && result.aidinpan_indices.length > 0) {
-            indexData = result.aidinpan_indices;
-            renderIndexAll();
-          }
+          renderCharts(); renderTable(); renderStats();
+          if (result?.aidinpan_indices && result.aidinpan_indices.length > 0) { indexData = result.aidinpan_indices; renderIndexAll(); }
           toast('已加载缓存数据');
         } else {
-          renderDefault();
-          refreshAll();
+          renderDefault(); refreshAll();
         }
       });
-      setTimeout(() => {
-        if (!initDone) {
-          initDone = true;
-          renderDefault();
-          refreshAll();
-        }
-      }, 3000);
+      setTimeout(() => { if (!initDone) { initDone = true; renderDefault(); refreshAll(); } }, 3000);
     } else {
-      initDone = true;
-      renderDefault();
-      refreshAll();
+      initDone = true; renderDefault(); refreshAll();
     }
   } catch (e) {
     console.error('init error', e);
-    if (!initDone) {
-      initDone = true;
-      renderDefault();
-    }
+    if (!initDone) { initDone = true; renderDefault(); }
   }
 }, 300);
 
 // ======================== 事件绑定 ========================
-// 指数 tab 切换
 document.querySelectorAll('.index-tab').forEach(tab => {
   tab.addEventListener('click', (e) => {
     const targetTab = e.target.dataset.tab;
@@ -838,42 +626,23 @@ document.querySelectorAll('.index-tab').forEach(tab => {
     document.querySelectorAll('.index-tab-panel').forEach(p => p.classList.remove('active'));
     e.target.classList.add('active');
     document.getElementById('tab-' + targetTab).classList.add('active');
-    if (targetTab === 'chart' && indexChart) {
-      indexChart.resize();
-    }
+    if (targetTab === 'chart' && indexChart) indexChart.resize();
   });
 });
 
-// 添加对话框
-document.getElementById('btnAddOpen').addEventListener('click', () => {
-  document.getElementById('addDialog').style.display = 'block';
-  document.getElementById('addCode').focus();
-});
-document.getElementById('btnAddClose').addEventListener('click', () => {
-  document.getElementById('addDialog').style.display = 'none';
-});
-document.getElementById('btnAddCancel').addEventListener('click', () => {
-  document.getElementById('addDialog').style.display = 'none';
-});
-// 编辑对话框
-document.getElementById('btnEdit').addEventListener('click', () => {
-  document.getElementById('ta').value = JSON.stringify(data, null, 2);
-  document.getElementById('editor').style.display = 'block';
-});
-document.getElementById('btnEditClose').addEventListener('click', () => {
-  document.getElementById('editor').style.display = 'none';
-});
-// 其他按钮
+document.getElementById('btnAddOpen').addEventListener('click', () => { document.getElementById('addDialog').style.display = 'block'; document.getElementById('addCode').focus(); });
+document.getElementById('btnAddClose').addEventListener('click', () => { document.getElementById('addDialog').style.display = 'none'; });
+document.getElementById('btnAddCancel').addEventListener('click', () => { document.getElementById('addDialog').style.display = 'none'; });
+document.getElementById('btnEdit').addEventListener('click', () => { document.getElementById('ta').value = JSON.stringify(data, null, 2); document.getElementById('editor').style.display = 'block'; });
+document.getElementById('btnEditClose').addEventListener('click', () => { document.getElementById('editor').style.display = 'none'; });
 document.getElementById('btnRefresh').addEventListener('click', refreshAll);
 document.getElementById('btnExport').addEventListener('click', exportJson);
 document.getElementById('btnSave').addEventListener('click', saveEdit);
 document.getElementById('btnRestore').addEventListener('click', restore);
 document.getElementById('btnCancel').addEventListener('click', cancelEdit);
-// 添加
 document.getElementById('btnAdd').addEventListener('click', addETF);
 document.getElementById('addCode').addEventListener('keydown', (e) => { if (e.key === 'Enter') addETF(); });
 document.getElementById('addName').addEventListener('keydown', (e) => { if (e.key === 'Enter') addETF(); });
-// 表头排序
 document.getElementById('th-name').addEventListener('click', () => sort('name'));
 document.getElementById('th-code').addEventListener('click', () => sort('code'));
 document.getElementById('th-sector').addEventListener('click', () => sort('sector'));
