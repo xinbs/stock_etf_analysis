@@ -109,12 +109,42 @@
     <div class="index-tabs">
       <span class="index-tab active" data-tab="cards">卡片视图</span>
       <span class="index-tab" data-tab="chart">图表排名</span>
+      <span class="index-tab" data-tab="monthly">📅 月报</span>
     </div>
     <div class="index-tab-panel active" id="tab-cards">
       <div id="indexCards"></div>
     </div>
     <div class="index-tab-panel" id="tab-chart">
       <div id="indexChartBox" class="index-chart-box"></div>
+    </div>
+    <div class="index-tab-panel" id="tab-monthly">
+      <div class="bar" style="justify-content:flex-start;margin-bottom:12px">
+        <label style="color:#8b949e;font-size:13px;align-self:center">月份：</label>
+        <select id="monthSelect" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 10px;font-size:13px"></select>
+        <label style="color:#8b949e;font-size:13px;align-self:center;margin-left:12px">板块过滤：</label>
+        <select id="sectorFilter" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 10px;font-size:13px"><option value="">全部</option></select>
+        <button class="btn2" id="btnMonthlyRefresh" style="margin-left:auto">刷新月报</button>
+      </div>
+      <div class="grid" style="margin-bottom:14px">
+        <div class="card">
+          <h2>当月板块平均涨跌</h2>
+          <div id="monthlySectorChart" class="chart-box"></div>
+        </div>
+        <div class="card">
+          <h2>当月最佳 / 最差板块</h2>
+          <div id="bestWorstChart" class="chart-box"></div>
+        </div>
+      </div>
+      <div class="grid" style="margin-bottom:0">
+        <div class="card">
+          <h2>近 6 个月板块走势</h2>
+          <div id="sectorTrendChart" class="chart-box"></div>
+        </div>
+        <div class="card">
+          <h2>指数 vs 板块对比</h2>
+          <div id="indexVsSectorChart" class="chart-box"></div>
+        </div>
+      </div>
     </div>
   </div>
 
