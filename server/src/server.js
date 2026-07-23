@@ -414,9 +414,10 @@ async function fetchEastmoneyEtfSnapshot() {
   return { rows, errors, expected: universe.length, capturedAt, tradeDate };
 }
 
-// 资金流更新入口：交易时段外直接跳过；并发调用共享同一个 in-flight 任务，避免重复打满接口
+// 日内更新失败跟踪：正常轮换中失败的，下一轮优先重试一次；优先重试仍失败的回到正常轮换
 let fundFlowInflight = null;
 let intradayRotation = 0;
+const intradayPriority = new Set(); // 下一轮优先重试的 marketCode
 
 async function updateEtfFundFlows(options = {}) {
   const { force = false } = options;
@@ -499,13 +500,48 @@ async function doUpdateEtfFundFlows(options = {}) {
     if (intraday) {
       const universe = etfUniverse();
       const sliceCount = Math.max(1, Math.min(Number(intradaySlices) || 1, universe.length));
-      const sliceIndex = (intradayRotation++) % sliceCount;
-      const sliceCodes = sliceCount > 1
-        ? universe.filter((_, i) => i % sliceCount === sliceIndex).map(e => e.marketCode)
-        : null;
-      intradayResult = await updateEtfFundFlowIntraday(300, sliceCodes).catch(e => ({ success: false, error: e.message, saved: 0 }));
+      const sliceSize = Math.max(1, Math.ceil(universe.length / sliceCount));
+      const targetCodes = [];
+      const picked = new Set();
+      // 1) 上一轮正常轮换失败的，本轮优先重试一次（最多占满一个分片）
+      const priorityThisRound = new Set();
+      for (const code of intradayPriority) {
+        if (targetCodes.length >= sliceSize) break;
+        if (universe.some(e => e.marketCode === code) && !picked.has(code)) {
+          targetCodes.push(code);
+          picked.add(code);
+          priorityThisRound.add(code);
+        }
+      }
+      intradayPriority.clear(); // 优先重试只排一次
+      // 2) 剩余名额按轮换分片补齐
+      let sliceIndex = null;
+      if (targetCodes.length < sliceSize) {
+        const rotatable = universe.filter(e => !picked.has(e.marketCode));
+        if (rotatable.length) {
+          sliceIndex = (intradayRotation++) % sliceCount;
+          for (let k = 0; k < rotatable.length && targetCodes.length < sliceSize; k++) {
+            const etf = rotatable[(sliceIndex * sliceSize + k) % rotatable.length];
+            if (!picked.has(etf.marketCode)) {
+              targetCodes.push(etf.marketCode);
+              picked.add(etf.marketCode);
+            }
+          }
+        }
+      }
+      intradayResult = await updateEtfFundFlowIntraday(300, targetCodes).catch(e => ({ success: false, error: e.message, saved: 0 }));
       intradayResult.sliceCount = sliceCount;
       intradayResult.sliceIndex = sliceIndex;
+      // 3) 失败处理：正常轮换中失败的 -> 下轮优先一次；优先重试仍失败的 -> 回正常轮换；成功 -> 清除
+      const failedCodes = intradayResult.failedCodes || [];
+      for (const code of targetCodes) {
+        if (failedCodes.includes(code)) {
+          if (!priorityThisRound.has(code)) intradayPriority.add(code);
+        } else {
+          intradayPriority.delete(code);
+        }
+      }
+      if (priorityThisRound.size) intradayResult.priorityRetried = [...priorityThisRound];
     }
     const missing = Math.max(0, snapshot.expected - rows.length);
     const partialError = snapshot.errors.length ? `${missing} ETF failed: ${snapshot.errors[0].error}` : null;
@@ -704,6 +740,7 @@ async function updateEtfFundFlowIntraday(limit = 300, marketCodes = null) {
   let saved = 0;
   let failed = 0;
   const errors = [];
+  const failedCodes = [];
   const universe = etfUniverse();
   const targets = Array.isArray(marketCodes) && marketCodes.length
     ? universe.filter(e => marketCodes.includes(e.marketCode))
@@ -751,11 +788,12 @@ async function updateEtfFundFlowIntraday(limit = 300, marketCodes = null) {
       }
     } catch (e) {
       failed++;
+      failedCodes.push(etf.marketCode);
       errors.push(`${etf.marketCode}: ${e.message}`);
     }
     await sleep(150);
   }
-  return { success: saved > 0, saved, failed, errors: errors.slice(0, 5), limit };
+  return { success: saved > 0, saved, failed, failedCodes, errors: errors.slice(0, 5), limit };
 }
 
 function latestSnapshotRows(db) {
