@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "ETF板块分析助手",
+  "version": "1.0",
+  "description": "基于爱盯盘数据，自动分析ETF板块涨跌情况",
+  "permissions": ["activeTab", "storage", "scripting", "alarms"],
+  "host_permissions": ["<all_urls>", "chrome-extension://*/*"],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["global_indices_data.js", "global_indices_2y.json"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

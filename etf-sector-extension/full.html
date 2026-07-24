@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>ETF板块大盘分析器（猪肉群专用） - 全屏版</title>
+  <script src="echarts.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif; background: #0d1117; color: #c9d1d9; padding: 16px; }
+    h1 { text-align: center; color: #58a6ff; margin-bottom: 4px; font-size: 22px; }
+    .sub { text-align: center; color: #8b949e; font-size: 12px; margin-bottom: 12px; }
+    .bar { display: flex; gap: 8px; justify-content: center; margin-bottom: 14px; flex-wrap: wrap; }
+    button { padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; }
+    .btn { background: #238636; color: white; }
+    .btn2 { background: #1f6feb; color: white; }
+    .btn3 { background: #30363d; color: #c9d1d9; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
+    @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+    .card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 12px; }
+    .card h2 { font-size: 14px; color: #e6edf3; margin-bottom: 8px; border-bottom: 1px solid #30363d; padding-bottom: 6px; }
+    .chart-box { width: 100%; height: 420px; }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th { text-align: left; padding: 8px 6px; background: #0d1117; color: #8b949e; border-bottom: 1px solid #30363d; cursor: pointer; user-select: none; }
+    th:hover { color: #e6edf3; }
+    td { padding: 6px; border-bottom: 1px solid #21262d; }
+    tr:hover { background: #1c2128; }
+    .code { color: #58a6ff; font-size: 11px; }
+    .tag { font-size: 10px; padding: 2px 6px; border-radius: 8px; background: #30363d; color: #8b949e; }
+    .badge { padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; min-width: 50px; text-align: center; display: inline-block; }
+    .badge.up { background: #3d1f1f; color: #ff7b72; }
+    .badge.down { background: #1f3d1f; color: #7ee787; }
+    .badge.flat { background: #30363d; color: #8b949e; }
+    .stats-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; text-align: center; }
+    .stat .val { font-size: 20px; font-weight: 700; }
+    .stat .lbl { font-size: 11px; color: #8b949e; margin-top: 2px; }
+    .toast { position: fixed; bottom: 20px; right: 20px; background: #238636; color: white; padding: 10px 18px; border-radius: 6px; font-size: 14px; z-index: 1000; opacity: 0; transition: opacity 0.3s; }
+    .toast.show { opacity: 1; }
+    .editor { display: none; margin-top: 12px; }
+    textarea { width: 100%; height: 160px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; padding: 10px; font-family: monospace; font-size: 11px; resize: vertical; }
+    .status-line { text-align: center; color: #8b949e; font-size: 12px; margin-bottom: 10px; }
+    .add-row { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+    .add-row input { flex: 1; min-width: 140px; padding: 6px 10px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 13px; }
+    .add-row input:focus { outline: none; border-color: #1f6feb; }
+    .add-hint { font-size: 11px; color: #8b949e; margin-top: 6px; }
+    .del-btn { background: #da3633; color: white; border: none; border-radius: 4px; padding: 2px 8px; font-size: 11px; cursor: pointer; }
+    .del-btn:hover { background: #f85149; }
+    .asc::after { content: ' ↑'; color: #58a6ff; }
+    .desc::after { content: ' ↓'; color: #58a6ff; }
+    /* 弹窗对话框 */
+    .dialog-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 1000; display: flex; align-items: center; justify-content: center; }
+    .dialog-card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; width: 90%; max-width: 480px; padding: 0; overflow: hidden; }
+    .dialog-title { display: flex; justify-content: space-between; align-items: center; padding: 14px 18px; border-bottom: 1px solid #30363d; }
+    .dialog-title h2 { font-size: 15px; color: #e6edf3; margin: 0; }
+    .dialog-close { background: none; border: none; color: #8b949e; font-size: 22px; cursor: pointer; padding: 0; line-height: 1; }
+    .dialog-close:hover { color: #e6edf3; }
+    .dialog-body { padding: 18px; }
+    .form-row { margin-bottom: 14px; }
+    .form-row:last-child { margin-bottom: 0; }
+    .form-row label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 6px; }
+    .form-row input { width: 100%; padding: 8px 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 6px; color: #c9d1d9; font-size: 14px; }
+    .form-row input:focus { outline: none; border-color: #1f6feb; }
+    .form-hint { font-size: 11px; color: #8b949e; margin-top: 4px; }
+    .index-section { margin-bottom: 16px; }
+    .index-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 10px; }
+    @media (max-width: 1200px) { .index-grid { grid-template-columns: repeat(3, 1fr); } }
+    @media (max-width: 900px) { .index-grid { grid-template-columns: repeat(2, 1fr); } }
+    @media (max-width: 600px) { .index-grid { grid-template-columns: 1fr; } }
+    .index-card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px 14px; position: relative; transition: border-color 0.2s; }
+    .index-card:hover { border-color: #1f6feb; }
+    .index-market-label { position: absolute; top: 6px; right: 8px; font-size: 10px; padding: 1px 6px; border-radius: 4px; background: #30363d; color: #8b949e; }
+    .index-name { font-size: 13px; color: #e6edf3; font-weight: 500; margin-bottom: 4px; }
+    .index-price { font-size: 18px; font-weight: 700; color: #e6edf3; margin-bottom: 2px; }
+    .index-change-row { display: flex; align-items: center; gap: 8px; }
+    .index-change { font-size: 12px; font-weight: 600; }
+    .index-change.up { color: #ff7b72; }
+    .index-change.down { color: #7ee787; }
+    .index-change.flat { color: #8b949e; }
+    .index-change-pct { font-size: 11px; padding: 1px 6px; border-radius: 4px; font-weight: 600; }
+    .index-change-pct.up { background: #3d1f1f; color: #ff7b72; }
+    .index-change-pct.down { background: #1f3d1f; color: #7ee787; }
+    .index-change-pct.flat { background: #30363d; color: #8b949e; }
+    .index-divider { height: 1px; background: #21262d; margin: 8px 0; }
+    .index-tabs { display: flex; gap: 4px; margin-top: 8px; margin-bottom: 12px; }
+    .index-tab { padding: 4px 14px; border-radius: 6px; font-size: 12px; cursor: pointer; border: 1px solid #30363d; background: #0d1117; color: #8b949e; }
+    .index-tab.active { background: #1f6feb; border-color: #1f6feb; color: white; }
+    .index-chart-box { height: 320px; margin-top: 8px; }
+    .index-tab-panel { display: none; }
+    .index-tab-panel.active { display: block; }
+  </style>
+</head>
+<body>
+  <h1>ETF 板块大盘分析器（猪肉群专用）</h1>
+  <div class="sub">实时 ETF 板块分析 · 腾讯财经数据源</div>
+  <div class="status-line" id="statusLine">加载中... (如果长时间空白，请按 F12 查看控制台)</div>
+
+  <div class="bar">
+    <button class="btn" id="btnEdit">编辑数据</button>
+    <button class="btn2" id="btnRefresh">刷新数据（腾讯财经）</button>
+    <button class="btn" id="btnExport">导出 JSON</button>
+    <button class="btn" id="btnAddOpen">➕ 添加 ETF</button>
+    <button class="btn3" id="btnReimport" title="强制重新导入 2 年指数历史并采集今日数据">⚙ 重新建库</button>
+    <button class="btn3" id="btnAshare" title="从腾讯 K 线拉 A 股 4 个指数 6 月每日数据写入 IDB（一次性）">📈 补 A 股 6 月</button>
+    <button class="btn3" id="btnETFHistory" title="从腾讯 K 线拉 38 个 ETF 1-6 月每日数据，按板块聚合成日级 sector 记录写入 IDB">📊 补 ETF 1-6 月</button>
+    <button class="btn3" id="btnNuke" title="彻底清掉本地数据库再重建（事务残留时使用）" style="background:#da3633;color:white">☢ 全清重建</button>
+  </div>
+
+  <div class="card index-section" id="indexSection" style="display:none">
+    <div class="index-tabs">
+      <span class="index-tab active" data-tab="cards">🌍 全球指数</span>
+      <span class="index-tab" data-tab="chart">📊 指数排名</span>
+      <span class="index-tab" data-tab="sector">📈 板块涨跌</span>
+      <span class="index-tab" data-tab="monthly">📅 月报</span>
+    </div>
+    <div class="index-tab-panel active" id="tab-cards">
+      <div id="indexCards"></div>
+    </div>
+    <div class="index-tab-panel" id="tab-chart">
+      <div style="margin-bottom:14px">
+        <h2 style="font-size:13px;color:#e6edf3;margin-bottom:6px">指数涨跌排名（当日）</h2>
+        <div id="indexChartBox" class="index-chart-box" style="height:280px"></div>
+      </div>
+      <div>
+        <h2 style="font-size:13px;color:#e6edf3;margin-bottom:6px">指数涨跌排名（今年）</h2>
+        <div id="indexYtdChart" class="chart-box" style="height:280px"></div>
+      </div>
+    </div>
+    <div class="index-tab-panel" id="tab-sector">
+      <div class="grid" style="margin-bottom:0">
+        <div>
+          <h2 style="font-size:14px;color:#e6edf3;margin-bottom:8px">板块当日涨跌排名</h2>
+          <div id="dailyChart" class="chart-box"></div>
+        </div>
+        <div>
+          <h2 style="font-size:14px;color:#e6edf3;margin-bottom:8px">板块年度涨跌排名</h2>
+          <div id="ytdChart" class="chart-box"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="index-tab-panel" id="tab-monthly">
+      <div class="status-line" id="monthlyHint" style="text-align:left;background:#161b22;border:1px solid #30363d;border-radius:6px;padding:8px 12px;margin-bottom:10px;color:#8b949e;font-size:12px">
+        提示：板块历史数据从今天开始累（每天收盘后自动采集）。指数历史已通过 2 年历史 JSON 导入，下方"指数 vs 板块对比"在历史月份会显示指数走势。
+      </div>
+      <div class="bar" style="justify-content:flex-start;margin-bottom:12px">
+        <label style="color:#8b949e;font-size:13px;align-self:center">月份：</label>
+        <select id="monthSelect" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 10px;font-size:13px"></select>
+        <label style="color:#8b949e;font-size:13px;align-self:center;margin-left:12px">板块过滤：</label>
+        <select id="sectorFilter" style="background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:6px;padding:6px 10px;font-size:13px"><option value="">全部</option></select>
+        <button class="btn2" id="btnMonthlyRefresh" style="margin-left:auto">刷新月报</button>
+      </div>
+      <div class="grid" style="margin-bottom:14px">
+        <div class="card">
+          <h2>当月板块平均涨跌</h2>
+          <div id="monthlySectorChart" class="chart-box"></div>
+        </div>
+        <div class="card">
+          <h2>当月最佳 / 最差板块</h2>
+          <div id="bestWorstChart" class="chart-box"></div>
+        </div>
+      </div>
+      <div class="grid" style="margin-bottom:0">
+        <div class="card">
+          <h2>近 6 月指数 YTD 走势</h2>
+          <div id="sectorTrendChart" class="chart-box"></div>
+        </div>
+        <div class="card">
+          <h2>指数 vs 板块（近 6 月月均）</h2>
+          <div id="indexVsSectorChart" class="chart-box"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom: 16px">
+    <div class="stats-grid" id="statsPanel"></div>
+  </div>
+
+  <div class="card">
+    <h2>全部 ETF 明细</h2>
+    <table id="table">
+      <thead><tr>
+        <th id="th-name">名称<span class="arrow"></span></th>
+        <th id="th-code">代码<span class="arrow"></span></th>
+        <th id="th-sector">板块<span class="arrow"></span></th>
+        <th id="th-daily">当日涨跌<span class="arrow"></span></th>
+        <th id="th-ytd">年初至今<span class="arrow"></span></th>
+        <th>操作</th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="editor" id="addDialog">
+    <div class="dialog-overlay">
+      <div class="dialog-card">
+        <div class="dialog-title">
+          <h2>添加 ETF</h2>
+          <button class="dialog-close" id="btnAddClose">×</button>
+        </div>
+        <div class="dialog-body">
+          <div class="form-row">
+            <label>ETF 代码</label>
+            <input type="text" id="addCode" placeholder="如 sh510300" maxlength="10">
+            <div class="form-hint">格式：sh/sz + 6位数字</div>
+          </div>
+          <div class="form-row">
+            <label>ETF 名称</label>
+            <input type="text" id="addName" placeholder="如 沪深300ETF" maxlength="20">
+            <div class="form-hint">用于板块分类</div>
+          </div>
+        </div>
+        <div class="dialog-footer">
+          <button class="btn3" id="btnAddCancel">取消</button>
+          <button class="btn" id="btnAdd">确认添加</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="editor" id="editor">
+    <div class="dialog-overlay">
+      <div class="dialog-card" style="max-width: 900px;">
+        <div class="dialog-title">
+          <h2>数据编辑（JSON 格式）</h2>
+          <button class="dialog-close" id="btnEditClose">×</button>
+        </div>
+        <div class="dialog-body">
+          <textarea id="ta"></textarea>
+        </div>
+        <div class="dialog-footer">
+          <button class="btn3" id="btnCancel">取消</button>
+          <button class="btn2" id="btnRestore">恢复默认</button>
+          <button class="btn" id="btnSave">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <!-- 把指数历史 JSON 数据通过 script 注入（sandbox 模式下 fetch 自己扩展资源可能被 CSP 拦） -->
+  <script src="global_indices_data.js?v=1"></script>
+  <script src="full.js?v=4"></script>
+</body>
+</html>
